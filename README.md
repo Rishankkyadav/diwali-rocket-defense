@@ -9,9 +9,10 @@ Works on desktop (mouse) and phones (touch, landscape).
 ## How to play
 
 - **Drag back** from the rocket on the roof and **release** to launch, like a slingshot. The further you pull, the faster it flies. On phones you can start the drag anywhere on the screen.
-- The dotted arc only shows the **first 40 %** of the flight, and it ignores **wind**. Read the HUD arrow and the smoke plume to judge the rest.
+- The dotted arc shows the whole flight with a landing marker, but it ignores **wind**. Read the HUD arrow and the smoke plume to adjust.
+- You can aim **downward** from the roof, so zombies right by your door are still hittable.
 - **Direct hit**: 1 damage, ×2 points. **Splash** (within 2.5 m): 0.5 damage. A **miss** resets your streak, and the zombie stops to dance at you.
-- Three kills in a row charge **Chotu the speedster**. Tap the shoe icon (or press **S**) and he sprints out and flattens the current zombie, Tanks included.
+- Three kills in a row charge **Chotu the speedster**. Tap the shoe icon (or press **S**) and he sprints out, flattens the current zombie (Tanks included) and barks about it.
 - Zombies that reach the door cost a life. You get a bonus life every 3 waves (max 5). After wave 5 the game switches to **endless mode**.
 
 | Key | Action |

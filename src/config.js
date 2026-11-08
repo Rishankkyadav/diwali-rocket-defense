@@ -27,10 +27,10 @@ export const MAX_STEPS_PER_FRAME = 5;
 export const GRAB_RADIUS = 24;        // px native
 export const MAX_PULL = 60;           // px native
 export const MIN_PULL = 6;            // px — less than this cancels
-export const ANGLE_MIN = 5;           // degrees above horizontal
+export const ANGLE_MIN = -60;         // degrees (negative = aim down from the roof)
 export const ANGLE_MAX = 85;
-export const PREVIEW_DOT_DT = 0.05;   // s between preview dots
-export const PREVIEW_FRACTION = 0.4;  // fraction of flight shown
+export const PREVIEW_DOT_DT = 0.06;   // s between preview dots
+export const PREVIEW_FRACTION = 1.0;  // fraction of flight shown (still ignores wind)
 
 // ---- Combat ----
 export const SPLASH_RADIUS = 2.5;     // m from nearest point of hitbox

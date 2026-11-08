@@ -41,8 +41,12 @@ export function shotFromPull(dx, dy) {
   const t = len / MAX_PULL;
   // screen y points down; pulling the pointer *down* aims *up*
   let ang = (Math.atan2(-dy, dx) * 180) / Math.PI;
-  if (ang > ANGLE_MAX || ang < -90) ang = ANGLE_MAX;
-  else if (ang < ANGLE_MIN) ang = ANGLE_MIN;
+  if (ang > ANGLE_MAX || ang < ANGLE_MIN) {
+    // snap to whichever limit is closer around the circle, so the aim never jumps wildly
+    const toMax = (((ang - ANGLE_MAX) % 360) + 360) % 360;
+    const toMin = (((ANGLE_MIN - ang) % 360) + 360) % 360;
+    ang = toMax <= toMin ? ANGLE_MAX : ANGLE_MIN;
+  }
   const v0 = V_MIN + (V_MAX - V_MIN) * t;
   return { len, power: t, angle: ang, v0 };
 }
@@ -56,7 +60,8 @@ export function previewDots(angle, v0) {
     stepRocket(r, 0, DT);
     if (r.t >= next - 1e-9) { pts.push({ x: r.x, y: r.y, t: r.t }); next += PREVIEW_DOT_DT; }
   }
-  const cutoff = r.t * PREVIEW_FRACTION;
+  pts.push({ x: r.x, y: Math.max(0, r.y), t: r.t, landed: r.y <= 0 }); // where it comes down
+  const cutoff = r.t * PREVIEW_FRACTION + 1e-9;
   return pts.filter((p) => p.t <= cutoff);
 }
 

@@ -80,7 +80,15 @@ export function drawHUD(ctx, g, t) {
     ctx.fillStyle = filled ? (g.charged ? PAL.yellow : PAL.cyan) : PAL.navy2;
     ctx.fillRect(ix - 3 + i * 7, iy + 14, 4, 2);
   }
-  if (g.charged) drawText(ctx, g.touchUsed ? 'TAP!' : 'S', pb.x - 2, iy + 2, { color: glow ? PAL.yellow : PAL.white, shadow: PAL.black, align: 'right' });
+  if (g.charged) {
+    drawText(ctx, g.touchUsed ? 'TAP!' : 'S', pb.x - 2, iy + 2, { color: glow ? PAL.yellow : PAL.white, shadow: PAL.black, align: 'right' });
+    if (!g.rocket && !g.speedster && g.zombie) {
+      const msg = g.touchUsed ? 'SPEEDSTER READY!  TAP THE SHOE' : 'SPEEDSTER READY!  PRESS S';
+      drawText(ctx, msg, W / 2, 38, { color: glow ? PAL.cyan : PAL.white, outline: PAL.black, align: 'center' });
+    }
+  } else if (g.meter > 0) {
+    drawText(ctx, `${g.meter}/${POWERUP_SEGMENTS}`, pb.x - 2, iy + 2, { color: PAL.grey1, shadow: PAL.black, align: 'right' });
+  }
 
   // pause button
   const ps = HUD_BUTTONS.pause;

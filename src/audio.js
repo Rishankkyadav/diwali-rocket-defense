@@ -175,6 +175,30 @@ export function skid() {
   noise({ dur: 0.35, vol: 0.25, type: 'bandpass', f0: 3000, f1: 1200, Q: 4 });
   tone({ type: 'sawtooth', f0: 900, f1: 600, dur: 0.3, vol: 0.05, filter: { type: 'bandpass', freq: 1500, Q: 3 } });
 }
+// Two loud "WOOF!"s: a pitch-dropping growl through a mouth-ish formant plus a breathy burst.
+export function bark() {
+  if (!ready()) return;
+  [0, 0.24].forEach((d, i) => {
+    const t = ac.currentTime + d;
+    const f0 = i ? 440 : 520;
+    const o = ac.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(f0 * 0.8, t);
+    o.frequency.linearRampToValueAtTime(f0, t + 0.03);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.45, t + 0.16);
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 2.5;
+    bp.frequency.setValueAtTime(1400, t); bp.frequency.exponentialRampToValueAtTime(600, t + 0.16);
+    const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 3000;
+    const g = ac.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(1.0, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.25, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(bp); bp.connect(lp); lp.connect(g); g.connect(sfxBus);
+    o.start(t); o.stop(t + 0.2);
+    noise({ dur: 0.1, vol: 0.35, type: 'bandpass', f0: 1800, f1: 700, Q: 1.5, delay: d });
+  });
+}
+
 export function doorKnock() {
   for (let i = 0; i < 3; i++) {
     tone({ type: 'sine', f0: 180, f1: 90, dur: 0.1, vol: 0.6, delay: i * 0.16 });

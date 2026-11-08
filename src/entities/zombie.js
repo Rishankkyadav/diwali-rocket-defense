@@ -16,10 +16,10 @@ export class Zombie {
     this.type = type;
     this.def = ZOMBIES[type];
     this.look = LOOKS[type];
-    this.x = Math.min(spawnX, FIELD_MAX_X - this.def.w); // left edge, metres
+    this.x = spawnX; // left edge, metres (spawns just off the right edge and walks in)
     this.hp = this.def.hp;
     this.speed = this.def.speed * speedMul * (1 + (Math.random() * 2 - 1) * SPEED_JITTER);
-    this.state = 'rise';
+    this.state = 'walk';
     this.stateT = 0;
     this.animT = Math.random();
     this.flash = 0;
@@ -39,7 +39,7 @@ export class Zombie {
     if (this.flash > 0) this.flash -= dt;
     if (this.kbLeft > 0) {
       const m = Math.min(this.kbLeft, this.kbRate * dt);
-      this.x = Math.min(FIELD_MAX_X - this.def.w, this.x + m);
+      this.x = Math.max(this.x, Math.min(FIELD_MAX_X - this.def.w, this.x + m));
       this.kbLeft -= m;
     }
     switch (this.state) {

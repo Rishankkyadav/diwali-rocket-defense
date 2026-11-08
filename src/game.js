@@ -95,7 +95,7 @@ export class Game {
   spawnNext() {
     if (this.mode !== 'play' || !this.queue.length) return;
     const type = this.queue.shift();
-    const x = rand(this.params.dist[0], this.params.dist[1]);
+    const x = C.FIELD_MAX_X + 0.3; // enter from the right edge
     this.zombie = new Zombie(type, x, this.params.speedMul);
     this.wind = rollWind(this.params);
     const c = this.zombie.centerPx;
@@ -292,7 +292,13 @@ export class Game {
       for (const ev of this.speedster.update(dt, this.zombie, this.fx)) {
         if (ev === 'hit') {
           audio.skid();
-          if (this.zombie && !this.zombie.dead) this.killZombie(this.zombie, 'speedster');
+          if (this.zombie && !this.zombie.dead) {
+            const c = this.zombie.centerPx;
+            this.killZombie(this.zombie, 'speedster');
+            audio.bark();
+            this.speedster.barkT = 0.6;
+            this.fx.text('WOOF! WOOF!', Math.max(40, Math.min(W - 40, c.x)), c.y - 40, { color: PAL.white, scale: 2, life: 1.3, vy: -10, outline: PAL.blue3 });
+          }
         } else if (ev === 'turn') audio.sprint();
         else if (ev === 'done') this.speedster = null;
       }
@@ -448,12 +454,22 @@ export class Game {
       const col = shot.power < 0.6 ? PAL.gold : shot.power < 0.85 ? PAL.orange : PAL.red2;
       // preview dots: real physics, no wind, first 40 % of the flight
       const dots = previewDots(shot.angle, shot.v0);
+      // big outlined dots so they read against any part of the sky or skyline
+      const blink = Math.floor(this.t * 8);
       dots.forEach((p, i) => {
-        if (i < 2) return;
-        ctx.fillStyle = PAL.black; ctx.fillRect(Math.round(toScreenX(p.x)) + 1, Math.round(toScreenY(p.y)) + 1, 1, 1);
-        ctx.fillStyle = i % 2 ? PAL.white : PAL.yellow;
-        ctx.fillRect(Math.round(toScreenX(p.x)), Math.round(toScreenY(p.y)), 1, 1);
+        if (i < 1) return;
+        const x = Math.round(toScreenX(p.x)) - 1, y = Math.round(toScreenY(p.y)) - 1;
+        ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, 4, 4);
+        ctx.fillStyle = (i + blink) % 4 === 0 ? PAL.cyan : i % 2 ? PAL.white : PAL.yellow;
+        ctx.fillRect(x, y, 2, 2);
       });
+      const end = dots[dots.length - 1];
+      if (end && end.landed) { // landing marker on the street
+        const lx = Math.round(toScreenX(end.x));
+        ctx.fillStyle = PAL.black; ctx.fillRect(lx - 4, C.GROUND_Y - 1, 9, 3);
+        ctx.fillStyle = PAL.red2; ctx.fillRect(lx - 3, C.GROUND_Y, 7, 1);
+        ctx.fillStyle = PAL.white; ctx.fillRect(lx, C.GROUND_Y - 1, 1, 3);
+      }
       // stretched launch line + power ring
       pixelLine(ctx, ax, ay, rx, ry, col);
       const r = 7;

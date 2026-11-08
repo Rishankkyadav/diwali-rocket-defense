@@ -14,6 +14,7 @@ export class Speedster {
     this.dir = 1;
     this.dustT = 0;
     this.done = false;
+    this.barkT = 0;
   }
 
   // events: 'hit' when it slams the zombie, 'done' when it's back inside.
@@ -29,10 +30,11 @@ export class Speedster {
         events.push('hit');
       }
     } else if (this.state === 'skid') {
+      if (this.barkT > 0) this.barkT -= dt;
       this.v = Math.max(0, this.v - 30 * dt);
       this.x += this.v * dt;
       if (Math.random() < 0.6) fx.particles.spawn((this.x + W_M) * PX_PER_M, GROUND_Y - 1, 20 + Math.random() * 40, -20 - Math.random() * 30, 0.5, RAMPS.dirt, 1, 120);
-      if (this.t >= SPEEDSTER_SKID_TIME) { this.state = 'back'; this.t = 0; this.dir = -1; events.push('turn'); }
+      if (this.t >= SPEEDSTER_SKID_TIME && this.barkT <= 0) { this.state = 'back'; this.t = 0; this.dir = -1; events.push('turn'); }
     } else if (this.state === 'back') {
       this.x -= SPEEDSTER_SPEED * dt;
       if (this.x <= DOOR_X - 1.2) { this.state = 'done'; this.done = true; events.push('done'); }
@@ -56,6 +58,13 @@ export class Speedster {
     ctx.beginPath(); ctx.rect(DOOR_X * PX_PER_M - 2, 0, 480, 270); ctx.clip();
     const frame = this.state === 'skid' ? -1 : Math.floor(this.t * 24) % 6;
     drawSpeedster(ctx, left, GROUND_Y - SH, frame, this.dir < 0);
+    if (this.barkT > 0) {
+      ctx.fillStyle = PAL.black; ctx.fillRect(left + 7, GROUND_Y - SH + 6, 3, 2); // wide-open barking mouth
+      if (Math.floor(this.barkT * 10) % 2) {
+        ctx.fillStyle = PAL.white;
+        ctx.fillRect(left + 12, GROUND_Y - SH + 2, 2, 1); ctx.fillRect(left + 13, GROUND_Y - SH + 5, 3, 1); ctx.fillRect(left + 12, GROUND_Y - SH + 8, 2, 1);
+      }
+    }
     // motion lines
     if (frame >= 0) {
       ctx.fillStyle = PAL.white;
