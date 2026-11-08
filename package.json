@@ -1,0 +1,15 @@
+{
+  "name": "diwali-rocket-defense",
+  "version": "1.0.0",
+  "private": true,
+  "description": "2D pixel-art artillery game: defend your rooftop on Diwali night by slingshotting firework rockets at goofy zombies.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11"
+  }
+}
