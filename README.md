@@ -8,23 +8,22 @@ Works on desktop (mouse) and phones (touch, landscape).
 
 ## How to play
 
-Aiming works like a golf game: you pick a target, then time a swing meter.
+It's a slingshot:
 
-1. **Aim:** move the mouse (or drag a finger) to put the crosshair where you want the rocket to go. The dotted path shows how it will fly. Close shots fly almost straight, long ones arc. The path ignores **wind**, so check the HUD arrow and the smoke plume and adjust.
-2. **Swing:** click (or press Space, or tap **FIRE** on a phone) and a needle starts sweeping across the meter.
-3. **Release:** click again when the needle is in the **gold** zone for a perfect shot. Stopping left of centre sends the shot low, right sends it high. You can also press, hold and let go.
-
+- **Press anywhere, pull back, release.** Pull down and back to fire up and out, or pull up and back to fire *down* at zombies near your door. The further you pull, the faster and flatter the shot.
+- **Trackpad-friendly:** click once without dragging, move to pull back, click again to fire.
+- The dotted path shows the whole flight, ignoring wind. **Yellow brackets** appear on the zombie the shot is lined up on.
 - Zombies keep walking while the rocket flies, so **aim ahead of them**.
-- Later waves send several zombies at once, and the needle gets faster every wave.
+- Later waves send several zombies at once.
 - **Direct hit**: 1 damage, ×2 points. **Splash** (within 1.5 m): 0.5 damage to everyone nearby. A **miss** resets your streak, and the nearest zombie dances at you.
 - Three kills in a row charge **Chotu the speedster**. Tap the shoe icon (or press **S**) and he sprints out, flattens the front zombie (Tanks included) and barks about it.
 - Zombies that reach the door cost a life. You get a bonus life every 3 waves (max 5). After wave 5 the game switches to **endless mode**.
 
 | Key | Action |
 |---|---|
-| Mouse move / touch drag | Aim |
-| Click / Space / FIRE button | Start the swing, then click again to release |
-| Esc (during a swing) | Cancel the swing |
+| Drag back, release | Aim and fire |
+| Click, move, click | Aim and fire without holding (trackpads) |
+| Esc (while aiming) | Cancel the shot |
 | S | Speedster power-up |
 | Esc / P | Pause |
 | M | Mute |

@@ -15,25 +15,21 @@ export const G = 9.81;
 export const THRUST = 16;             // longer, stronger burn → close shots fly almost straight
 export const BURN_TIME = 0.8;
 export const DRAG_K = 0.01;
-export const LAUNCH_SPEED = 14;       // m/s — fixed; you aim at a target, the game solves the angle
 export const LAUNCH_POINT = { x: 2.5, y: 8.5 };
 export const ROCKET_RADIUS = 0.3;
 export const MAX_FLIGHT = 6;
 export const DT = 1 / 120;
 export const MAX_STEPS_PER_FRAME = 5;
 
-// ---- Controls: golf-style aim + swing meter ----
+// ---- Controls: slingshot ----
+// Press anywhere, pull back, release. Pull length → speed, pull direction (reversed) → angle.
+export const V_MIN = 5;               // m/s at the smallest pull
+export const V_MAX = 24;              // m/s at full pull — fast, direct shots
+export const MAX_PULL = 70;           // px (native) for full power
+export const MIN_PULL = 8;            // px dead zone: shorter than this does nothing / cancels
 export const AIM_ANGLE_MIN = -85;     // degrees; negative = shooting down off the roof
 export const AIM_ANGLE_MAX = 85;
-export const AIM_MAX_HEIGHT = 18;     // m — reticle can't go above this
-export const PREVIEW_DOT_DT = 0.045;  // s between path dots
-export const METER_PERIOD_START = 1.0;   // s for a full left→right→left sweep in wave 1
-export const METER_PERIOD_PER_WAVE = 0.06;
-export const METER_PERIOD_MIN = 0.5;
-export const METER_PERFECT = 0.07;    // |needle| inside this = perfect, zero error
-export const METER_GOOD = 0.25;       // drawn as the green zone
-export const METER_MAX_ERROR = 10;    // degrees of launch-angle error at the meter edge (linear in needle offset)
-export const HOLD_THRESHOLD = 0.22;   // s — press longer than this and releasing fires (hold mode)
+export const PREVIEW_DOT_DT = 0.04;   // s between path dots
 
 // ---- Combat ----
 export const SPLASH_RADIUS = 1.5;     // m from nearest point of hitbox

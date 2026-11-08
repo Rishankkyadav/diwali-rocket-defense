@@ -1,10 +1,10 @@
 // Game state machine: title → play (waves, pause) → game over.
-// Aiming is golf-style: place a target reticle, then time a swing meter.
+// Aiming is a slingshot: press anywhere, pull back, release.
 import * as C from './config.js';
 import { PAL, RAMPS, W } from './config.js';
 import * as audio from './audio.js';
 import {
-  LAUNCH_PX, solveAim, previewPath, toScreenX, toScreenY, toWorldX, toWorldY, circleHitsRect, distPointRect,
+  LAUNCH_PX, shotFromPull, previewShot, toScreenX, toScreenY, circleHitsRect, distPointRect,
 } from './physics.js';
 import { waveParams, buildWave, rollWind } from './waves.js';
 import { Player } from './entities/player.js';
@@ -13,9 +13,10 @@ import { Rocket, drawRocketSprite } from './entities/rocket.js';
 import { Speedster } from './entities/speedster.js';
 import { FX, AmbientFireworks } from './fx/particles.js';
 import { Background } from './fx/background.js';
-import { drawHUD, drawBanner, drawOffscreenRocket, drawSwingMeter, HUD_BUTTONS, inRect } from './ui/hud.js';
+import { drawHUD, drawBanner, drawOffscreenRocket, HUD_BUTTONS, inRect } from './ui/hud.js';
 import { titleButtons, pauseButtons, gameOverButtons, hitButton, drawTitle, drawPause, drawGameOver } from './ui/screens.js';
 import { drawText } from './ui/font.js';
+import { ringCircle, pixelLine } from './gfx.js';
 
 function loadSave() {
   try { return JSON.parse(localStorage.getItem(C.STORAGE_KEY)) || {}; } catch { return {}; }
@@ -25,12 +26,6 @@ function writeSave(obj) {
 }
 
 const TAUNT_LINES = ['NYAH NYAH!', 'MISSED!', 'HEH HEH!'];
-
-// Needle position for a swing that has run for t seconds: starts at the left edge, ping-pongs.
-export function needleAt(t, period) {
-  const u = (t / period) % 1;
-  return u < 0.5 ? -1 + 4 * u : 3 - 4 * u;
-}
 
 export class Game {
   constructor() {
@@ -68,9 +63,8 @@ export class Game {
     this.meter = 0;          // power-up meter segments
     this.charged = false;
     this.inputLock = 0;
-    this.swing = null;       // active swing meter
-    this.touchAiming = false;
-    this.setAim(25, 0.9);
+    this.aim = null;         // active slingshot pull
+    this.preview = null;
     this.timers = [];
     this.bannerT = 0;
     this.bannerTotal = 1;
@@ -85,23 +79,11 @@ export class Game {
 
   after(sec, fn) { this.timers.push({ t: sec, fn }); }
   streakMult() { return Math.min(C.STREAK_CAP, 1 + C.STREAK_STEP * this.streak); }
-  meterPeriod() { return Math.max(C.METER_PERIOD_MIN, C.METER_PERIOD_START - C.METER_PERIOD_PER_WAVE * (this.wave - 1)); }
   frontZombie() {
     let f = null;
     for (const z of this.zombies) if (!z.dead && (!f || z.x < f.x)) f = z;
     return f;
   }
-
-  // ---------- aim ----------
-  setAim(x, y) {
-    x = Math.max(C.LAUNCH_POINT.x + 0.6, Math.min(C.FIELD_MAX_X + 2, x));
-    y = Math.max(0, Math.min(C.AIM_MAX_HEIGHT, y));
-    if (this.aimPt && Math.abs(this.aimPt.x - x) < 0.04 && Math.abs(this.aimPt.y - y) < 0.04) return;
-    this.aimPt = { x, y };
-    this.solution = solveAim(x, y);
-    this.path = previewPath(this.solution.angle, x);
-  }
-  aimFromScreen(px, py) { this.setAim(toWorldX(px), toWorldY(py)); }
 
   // ---------- flow ----------
   startGame() {
@@ -164,7 +146,7 @@ export class Game {
 
   gameOver() {
     this.mode = 'gameover';
-    this.cancelSwing();
+    this.cancelAim();
     this.newBest = this.score > this.save.best;
     if (this.newBest) this.save.best = this.score;
     writeSave(this.save);
@@ -173,7 +155,7 @@ export class Game {
 
   pause() {
     if (this.mode !== 'play') return;
-    this.cancelSwing();
+    this.cancelAim();
     this.mode = 'pause';
   }
   resume() { if (this.mode === 'pause') this.mode = 'play'; }
@@ -194,7 +176,7 @@ export class Game {
         case 'down': this.onDown(e); break;
         case 'move': this.onMove(e); break;
         case 'up': this.onUp(e); break;
-        case 'cancel': this.touchAiming = false; break;
+        case 'cancel': this.cancelAim(); break;
         case 'blur': this.pause(); break;
       }
     }
@@ -226,28 +208,16 @@ export class Game {
       case 'gameover': if (code === 'Enter' || code === 'Space') this.onMenuAction('retry'); break;
       case 'pause': if (code === 'Escape' || code === 'KeyP' || code === 'Enter' || code === 'Space') this.resume(); break;
       case 'play':
-        if (code === 'Escape') { if (this.swing) this.cancelSwing(); else this.pause(); }
+        if (code === 'Escape') { if (this.aim) this.cancelAim(); else this.pause(); }
         else if (code === 'KeyP') this.pause();
         else if (code === 'KeyS') this.tryPowerup();
-        else if (code === 'Space' || code === 'Enter') this.swingButton(false);
         break;
     }
   }
 
-  // Start the swing, or (if it's already running) release the shot.
-  swingButton(byHold) {
-    if (this.swing) { this.fire(); return; }
-    if (!this.canFire()) return;
-    this.swing = { t: 0, byHold };
-    this.player.setPull(0.7);
-    audio.creakStart();
-  }
-
-  cancelSwing() {
-    if (this.swing) { this.swing = null; this.player.cancelPull(); }
-    audio.creakStop();
-  }
-
+  // ---- slingshot ----
+  // Drag: press anywhere, pull back, release to fire.
+  // Click-move-click (great on trackpads): click without dragging, move to pull, click again to fire.
   onDown(e) {
     if (this.mode !== 'play') {
       const b = hitButton(this.menuButtons(), e);
@@ -256,15 +226,12 @@ export class Game {
     }
     if (inRect(e, HUD_BUTTONS.pause)) { this.pause(); return; }
     if (inRect(e, HUD_BUTTONS.power)) { this.tryPowerup(); return; }
-    if (this.touchUsed && inRect(e, HUD_BUTTONS.fire)) { this.swingButton(true); return; }
-    if (this.swing) { this.fire(); return; }           // second click releases
-    if (e.pointerType === 'touch') {                   // touch: drag to place the reticle
-      this.touchAiming = true;
-      this.aimFromScreen(e.x, e.y - 12);               // sit above the finger so you can see it
-      return;
-    }
-    this.aimFromScreen(e.x, e.y);
-    this.swingButton(true);                            // mouse/trackpad: click starts the swing
+    if (this.aim && this.aim.sticky) { this.release(); return; }
+    if (!this.canFire()) return;
+    this.aim = { ox: e.x, oy: e.y, sticky: false, moved: false, touch: e.pointerType === 'touch', shot: null, lastAngle: null };
+    this.player.setPull(0);
+    audio.creakStart();
+    audio.creakSet(0);
   }
 
   onMove(e) {
@@ -273,32 +240,48 @@ export class Game {
       this.hover = b ? b.id : null;
       return;
     }
-    if (this.swing) return;                            // aim locks while the meter runs
-    if (this.touchAiming) this.aimFromScreen(e.x, e.y - 12);
-    else if (!this.touchUsed || e.pointerType !== 'touch') this.aimFromScreen(e.x, e.y);
+    if (!this.aim) return;
+    const dx = this.aim.ox - e.x, dy = this.aim.oy - e.y;
+    if (Math.hypot(dx, dy) < C.MIN_PULL) {
+      this.aim.shot = null; // inside the dead zone: no aim, so it can't spin around
+      this.preview = null;
+      this.player.setPull(0);
+      return;
+    }
+    this.aim.moved = true;
+    this.aim.shot = shotFromPull(dx, dy, this.aim.lastAngle);
+    this.aim.lastAngle = this.aim.shot.angle;
+    this.preview = previewShot(this.aim.shot.angle, this.aim.shot.v0, this.zombies);
+    this.player.setPull(this.aim.shot.power);
+    audio.creakSet(this.aim.shot.power);
   }
 
-  onUp() {
-    this.touchAiming = false;
-    // hold-and-release also works: a long press fires on release
-    if (this.swing && this.swing.byHold && this.swing.t >= C.HOLD_THRESHOLD) this.fire();
+  onUp(e) {
+    if (!this.aim || this.aim.sticky) return;
+    this.onMove(e);
+    if (!this.aim.moved && !this.aim.touch) { this.aim.sticky = true; return; } // click-move-click mode
+    this.release();
   }
 
-  fire() {
-    if (!this.swing) return;
-    const e = needleAt(this.swing.t, this.meterPeriod());
-    this.swing = null;
+  release() {
+    const shot = this.aim && this.aim.shot;
+    this.aim = null;
+    this.preview = null;
     audio.creakStop();
-    if (!this.canFire()) { this.player.cancelPull(); return; }
-    const perfect = Math.abs(e) <= C.METER_PERFECT;
-    const err = perfect ? 0 : e * C.METER_MAX_ERROR;
-    this.rocket = new Rocket(this.solution.angle + err);
+    if (!shot || !this.canFire()) { this.player.cancelPull(); return; }
+    this.fire(shot);
+  }
+
+  cancelAim() {
+    if (this.aim) { this.aim = null; this.preview = null; this.player.cancelPull(); }
+    audio.creakStop();
+  }
+
+  fire(shot) {
+    this.rocket = new Rocket(shot.angle, shot.v0);
     this.shots++;
     this.player.release();
     audio.launch();
-    const label = perfect ? 'PERFECT!' : Math.abs(e) <= C.METER_GOOD ? 'GOOD' : e > 0 ? 'TOO HIGH!' : 'TOO LOW!';
-    const col = perfect ? PAL.cyan : Math.abs(e) <= C.METER_GOOD ? PAL.green : PAL.red2;
-    this.fx.text(label, 70, 108, { color: col, life: 0.9, vy: -10 });
     this.fx.particles.burst(LAUNCH_PX.x, LAUNCH_PX.y, 12, [RAMPS.flame, RAMPS.smoke], { speed: [10, 40], life: [0.2, 0.5], gravity: 20, flicker: false });
   }
 
@@ -306,7 +289,7 @@ export class Game {
     if (this.mode !== 'play' || !this.charged) return;
     const target = this.frontZombie();
     if (!target || this.rocket || this.speedster) return;
-    this.cancelSwing();
+    this.cancelAim();
     this.charged = false;
     this.meter = 0;
     this.speedster = new Speedster();
@@ -334,10 +317,10 @@ export class Game {
     if (this.inputLock > 0) this.inputLock -= dt;
     if (this.streakFlash > 0) this.streakFlash -= dt;
     if (this.shakeT > 0) this.shakeT -= dt;
-    if (this.swing) {
-      this.swing.t += dt;
-      audio.creakSet((needleAt(this.swing.t, this.meterPeriod()) + 1) / 2);
-      if (!this.canFire()) this.cancelSwing();
+    if (this.aim && !this.canFire()) this.cancelAim();
+    else if (this.aim && this.aim.shot && Math.floor(this.t * 120) % 6 === 0) {
+      // zombies move, so refresh which one the preview path runs into
+      this.preview = previewShot(this.aim.shot.angle, this.aim.shot.v0, this.zombies);
     }
 
     this.updateSpawning(dt);
@@ -503,12 +486,11 @@ export class Game {
     ctx.restore();
 
     if (this.mode !== 'title') {
-      if (this.swing) drawSwingMeter(ctx, needleAt(this.swing.t, this.meterPeriod()), this.t);
       drawHUD(ctx, this, this.t);
       drawBanner(ctx, this, this.t);
       if (this.rocket) drawOffscreenRocket(ctx, toScreenX(this.rocket.s.x), toScreenY(this.rocket.s.y));
       if (this.mode === 'play' && this.wave === 1 && this.shots < 2 && this.bannerT <= 0) {
-        const msg = this.touchUsed ? 'DRAG TO AIM, TAP FIRE, TAP AGAIN ON GOLD' : 'AIM WITH THE MOUSE, CLICK, THEN CLICK AGAIN ON GOLD';
+        const msg = this.touchUsed ? 'DRAG BACK ANYWHERE, AIM, LET GO TO FIRE' : 'DRAG BACK TO AIM, RELEASE TO FIRE  (OR CLICK, MOVE, CLICK)';
         drawText(ctx, msg, W / 2, 50, { color: PAL.white, outline: PAL.black, align: 'center' });
       }
     }
@@ -518,41 +500,65 @@ export class Game {
     else if (this.mode === 'gameover') drawGameOver(ctx, ui, this.t);
   }
 
-  // Golf-style aim: rocket on the launcher points along the solved angle,
-  // dotted no-wind path to the reticle, and the reticle itself.
+  // Slingshot visuals: rocket pulled back along the aim, launch band, power ring,
+  // and the full no-wind flight path with lock-on brackets / landing marker.
   drawAim(ctx) {
     if (this.rocket || this.speedster) return;
     const ax = LAUNCH_PX.x, ay = LAUNCH_PX.y;
-    const ang = (this.solution.angle * Math.PI) / 180;
-    if (this.mode !== 'play' || this.inputLock <= 0) {
-      drawRocketSprite(ctx, ax, ay - 1, this.mode === 'play' ? -ang : -Math.PI / 3, false, this.t);
+    const shot = this.aim && this.aim.shot;
+    if (!shot) {
+      if (this.mode !== 'play' || this.inputLock <= 0) drawRocketSprite(ctx, ax, ay - 1, -Math.PI / 3, false, this.t);
+      if (this.aim && this.aim.sticky) {
+        drawText(ctx, 'MOVE TO PULL BACK, CLICK TO FIRE', W / 2, 62, { color: PAL.yellow, outline: PAL.black, align: 'center' });
+      } else if (this.canFire()) {
+        const pulse = Math.floor(this.t * 3) % 2;
+        ringCircle(ctx, ax, ay - 1, 8 + pulse, pulse ? PAL.yellow : PAL.gold, 1, 3);
+      }
+      return;
     }
-    if (this.mode !== 'play' || !this.zombies.length || this.inputLock > 0) return;
+    const a = (shot.angle * Math.PI) / 180;
+    const col = shot.power < 0.6 ? PAL.gold : shot.power < 0.85 ? PAL.orange : PAL.red2;
 
-    const ok = this.solution.reachable;
-    const blink = Math.floor(this.t * 8);
-    this.path.forEach((p, i) => {
-      if (i < 3) return;
-      const x = Math.round(toScreenX(p.x)) - 1, y = Math.round(toScreenY(p.y)) - 1;
-      ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, 4, 4);
-      ctx.fillStyle = !ok ? PAL.rose : (i + blink) % 4 === 0 ? PAL.cyan : i % 2 ? PAL.white : PAL.yellow;
-      ctx.fillRect(x, y, 2, 2);
-    });
-    // reticle
-    const rx = Math.round(toScreenX(this.aimPt.x)), ry = Math.round(toScreenY(this.aimPt.y));
-    const col = !ok ? PAL.red2 : this.swing ? PAL.yellow : PAL.white;
-    const r = this.swing ? 5 : 6 + (Math.floor(this.t * 3) % 2);
-    ctx.fillStyle = PAL.black;
-    ctx.fillRect(rx - r - 1, ry - 1, r * 2 + 3, 3); ctx.fillRect(rx - 1, ry - r - 1, 3, r * 2 + 3);
-    ctx.fillStyle = col;
-    ctx.fillRect(rx - r, ry, r - 2, 1); ctx.fillRect(rx + 3, ry, r - 2, 1);
-    ctx.fillRect(rx, ry - r, 1, r - 2); ctx.fillRect(rx, ry + 3, 1, r - 2);
-    ctx.fillRect(rx, ry, 1, 1);
-    for (const [cx, cy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      ctx.fillRect(rx + cx * r, ry + cy * r, 1, 1);
-      ctx.fillRect(rx + cx * (r - 1), ry + cy * r, 1, 1);
-      ctx.fillRect(rx + cx * r, ry + cy * (r - 1), 1, 1);
+    const pv = this.preview;
+    if (pv) {
+      const blink = Math.floor(this.t * 10);
+      pv.pts.forEach((p, i) => {
+        if (i < 2) return;
+        const x = Math.round(toScreenX(p.x)) - 1, y = Math.round(toScreenY(p.y)) - 1;
+        ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, 4, 4);
+        ctx.fillStyle = (i + blink) % 5 === 0 ? PAL.cyan : i % 2 ? PAL.white : PAL.yellow;
+        ctx.fillRect(x, y, 2, 2);
+      });
+      if (pv.hit) {
+        // lock-on corner brackets around the zombie this shot runs into
+        const z = pv.hit;
+        const x0 = Math.round(toScreenX(z.x)) - 4, x1 = Math.round(toScreenX(z.x + z.def.w)) + 3;
+        const y0 = C.GROUND_Y - z.def.sh - 4, y1 = C.GROUND_Y + 1;
+        ctx.fillStyle = Math.floor(this.t * 6) % 2 ? PAL.yellow : PAL.white;
+        ctx.fillRect(x0, y0, 4, 1); ctx.fillRect(x0, y0, 1, 4);
+        ctx.fillRect(x1 - 3, y0, 4, 1); ctx.fillRect(x1, y0, 1, 4);
+        ctx.fillRect(x0, y1, 4, 1); ctx.fillRect(x0, y1 - 3, 1, 4);
+        ctx.fillRect(x1 - 3, y1, 4, 1); ctx.fillRect(x1, y1 - 3, 1, 4);
+      } else if (pv.landed) {
+        const ex = Math.round(toScreenX(pv.end.x));
+        ctx.fillStyle = PAL.black; ctx.fillRect(ex - 4, C.GROUND_Y - 1, 9, 3);
+        ctx.fillStyle = PAL.red2; ctx.fillRect(ex - 3, C.GROUND_Y, 7, 1);
+        ctx.fillStyle = PAL.white; ctx.fillRect(ex, C.GROUND_Y - 2, 1, 3);
+      }
     }
-    if (!ok) drawText(ctx, 'OUT OF RANGE', rx, ry - r - 10, { color: PAL.red2, outline: PAL.black, align: 'center' });
+
+    // rocket pulled back on the band, pointing where it will fly
+    const back = 6 + shot.power * 12;
+    const rx = Math.round(ax - Math.cos(a) * back), ry = Math.round(ay + Math.sin(a) * back);
+    pixelLine(ctx, ax, ay, rx, ry, col);
+    const steps = 28, lit = Math.round(steps * shot.power);
+    for (let i = 0; i < steps; i++) {
+      const ang = -Math.PI / 2 + (i / steps) * Math.PI * 2;
+      ctx.fillStyle = i < lit ? col : PAL.navy2;
+      ctx.fillRect(Math.round(rx + Math.cos(ang) * 10), Math.round(ry + Math.sin(ang) * 10), 1, 1);
+    }
+    drawRocketSprite(ctx, rx, ry, -a, false, this.t);
+    drawText(ctx, `${Math.round(shot.power * 100)}%`, rx, Math.max(2, ry - 20), { color: col, outline: PAL.black, align: 'center' });
   }
+
 }
