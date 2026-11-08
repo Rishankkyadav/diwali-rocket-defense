@@ -106,6 +106,8 @@ export function creakStop() {
 }
 
 export function launch() {
+  tone({ type: 'sine', f0: 120, f1: 40, dur: 0.25, vol: 0.6 });            // launcher thump
+  noise({ dur: 0.2, vol: 0.4, type: 'lowpass', f0: 1800, f1: 300 });       // backblast
   noise({ dur: 0.6, vol: 0.35, type: 'bandpass', f0: 600, f1: 3000, Q: 1.2 });
   noise({ dur: 0.5, vol: 0.12, type: 'highpass', f0: 5000, delay: 0.05 }); // fizz
 }

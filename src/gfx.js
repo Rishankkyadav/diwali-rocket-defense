@@ -73,3 +73,35 @@ export function seeded(seed) {
 export function lerpColorIndex(ramp, f) {
   return ramp[Math.min(ramp.length - 1, Math.max(0, Math.floor(f * ramp.length)))];
 }
+
+// Pre-rotate a character-map sprite (nose pointing right) into n frames around (cx, cy).
+// Nearest-neighbour inverse mapping keeps every frame on the pixel grid.
+export function makeRotFrames(sprite, cols, cx, cy, half, n = 64) {
+  const size = half * 2 + 1;
+  const frames = [];
+  for (let i = 0; i < n; i++) {
+    const h = (i / n) * Math.PI * 2;
+    const [c, ctx] = makeCanvas(size, size);
+    const cos = Math.cos(h), sin = Math.sin(h);
+    for (let dy = -half; dy <= half; dy++) {
+      for (let dx = -half; dx <= half; dx++) {
+        const sx = Math.round(cos * dx + sin * dy) + cx;
+        const sy = Math.round(-sin * dx + cos * dy) + cy;
+        const ch = sprite[sy] && sprite[sy][sx];
+        if (!ch || ch === '.') continue;
+        ctx.fillStyle = cols[ch];
+        ctx.fillRect(dx + half, dy + half, 1, 1);
+      }
+    }
+    frames.push(c);
+  }
+  return frames;
+}
+
+// Draw the frame of a rotated set closest to `heading` (screen radians, 0 = right, + = down).
+export function drawRotFrame(ctx, frames, half, x, y, heading) {
+  const n = frames.length;
+  let idx = Math.round((heading / (Math.PI * 2)) * n) % n;
+  if (idx < 0) idx += n;
+  ctx.drawImage(frames[idx], Math.round(x) - half, Math.round(y) - half);
+}

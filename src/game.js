@@ -9,7 +9,8 @@ import {
 import { waveParams, buildWave, rollWind } from './waves.js';
 import { Player } from './entities/player.js';
 import { Zombie } from './entities/zombie.js';
-import { Rocket, drawRocketSprite } from './entities/rocket.js';
+import { Rocket } from './entities/rocket.js';
+import { MUZZLE, REAR } from './entities/launcher.js';
 import { Speedster } from './entities/speedster.js';
 import { FX, AmbientFireworks } from './fx/particles.js';
 import { Background } from './fx/background.js';
@@ -299,7 +300,16 @@ export class Game {
     const label = perfect ? 'PERFECT!' : Math.abs(e) <= C.METER_GOOD ? 'GOOD' : e > 0 ? 'TOO HIGH!' : 'TOO LOW!';
     const col = perfect ? PAL.cyan : Math.abs(e) <= C.METER_GOOD ? PAL.green : PAL.red2;
     this.fx.text(label, 70, 108, { color: col, life: 0.9, vy: -10 });
-    this.fx.particles.burst(LAUNCH_PX.x, LAUNCH_PX.y, 12, [RAMPS.flame, RAMPS.smoke], { speed: [10, 40], life: [0.2, 0.5], gravity: 20, flicker: false });
+    // muzzle flash at the front, backblast out of the rear of the tube
+    const h = -((this.solution.angle + err) * Math.PI) / 180, c = Math.cos(h), sn = Math.sin(h);
+    const ax = LAUNCH_PX.x, ay = LAUNCH_PX.y;
+    this.fx.particles.burst(ax + c * MUZZLE, ay + sn * MUZZLE, 10, [RAMPS.flame], { speed: [10, 40], life: [0.1, 0.3], gravity: 0, flicker: false });
+    for (let i = 0; i < 16; i++) {
+      const sp = 30 + Math.random() * 60, spread = (Math.random() - 0.5) * 0.9;
+      const vx = -(c * Math.cos(spread) - sn * Math.sin(spread)) * sp, vy = -(sn * Math.cos(spread) + c * Math.sin(spread)) * sp;
+      this.fx.particles.spawn(ax - c * REAR, ay - sn * REAR, vx, vy, 0.3 + Math.random() * 0.4, i % 3 ? RAMPS.smoke : RAMPS.flame, i % 3 ? 2 : 1, -10, 1, false);
+    }
+    this.shakeT = Math.max(this.shakeT, 0.06);
   }
 
   tryPowerup() {
@@ -495,6 +505,8 @@ export class Game {
     this.bg.drawHouse(ctx, this.t);
     for (const z of [...this.zombies].sort((a, b) => b.x - a.x)) z.draw(ctx);
     if (this.speedster) this.speedster.draw(ctx);
+    this.player.heading = this.mode === 'play' ? -(this.solution.angle * Math.PI) / 180 : -Math.PI / 3;
+    this.player.loaded = !this.rocket && !this.speedster && (this.mode !== 'play' || this.inputLock <= 0);
     this.player.draw(ctx, this.t);
     this.drawAim(ctx);
     if (this.rocket) this.rocket.draw(ctx, this.t);
@@ -522,11 +534,6 @@ export class Game {
   // dotted no-wind path to the reticle, and the reticle itself.
   drawAim(ctx) {
     if (this.rocket || this.speedster) return;
-    const ax = LAUNCH_PX.x, ay = LAUNCH_PX.y;
-    const ang = (this.solution.angle * Math.PI) / 180;
-    if (this.mode !== 'play' || this.inputLock <= 0) {
-      drawRocketSprite(ctx, ax, ay - 1, this.mode === 'play' ? -ang : -Math.PI / 3, false, this.t);
-    }
     if (this.mode !== 'play' || !this.zombies.length || this.inputLock > 0) return;
 
     const ok = this.solution.reachable;

@@ -1,6 +1,7 @@
 // The launcher: an original footballer in a saffron-and-green kit, number 9.
 import { PAL } from '../config.js';
-import { brush } from '../gfx.js';
+import { brush, pixelLine } from '../gfx.js';
+import { drawLauncher, launcherPoint, GRIP_TRIGGER, GRIP_FRONT } from './launcher.js';
 
 const SKIN = PAL.brown, SKIN_D = PAL.brownD, HAIR = PAL.black;
 const SHIRT = PAL.orange, SHIRT_D = PAL.rust, SASH = PAL.white, COLLAR = PAL.yellow;
@@ -32,6 +33,8 @@ export class Player {
     this.t = 0;
     this.power = 0;
     this.siuShown = false;
+    this.heading = -Math.PI / 3;  // launcher aim (screen radians)
+    this.loaded = true;
   }
   setPull(power) { this.state = 'pull'; this.power = power; this.t = 0; }
   release() { this.state = 'release'; this.t = 0; }
@@ -52,16 +55,14 @@ export class Player {
   pose(globalT) {
     switch (this.state) {
       case 'pull': {
-        const lean = Math.min(3, Math.floor(this.power * 3.99));
-        return { view: 'side', lean, arms: 'pull', legs: 'brace', y: 0 };
+        return { view: 'side', lean: 0, arms: 'hold', legs: 'brace', y: 0 };
       }
       case 'release': {
-        const f = this.t < 0.12 ? 0 : 1;
-        return { view: 'side', lean: 0, arms: f ? 'forward' : 'pull', legs: f ? 'kick' : 'brace', y: 0 };
+        return { view: 'side', lean: 0, arms: 'hold', legs: 'brace', y: 0 };
       }
       case 'pump': {
         const f = Math.floor(this.t / 0.125) % 4;
-        return { view: 'side', lean: 0, arms: f % 2 === 0 ? 'up' : 'upHalf', legs: 'stand', y: 0 };
+        return { view: 'side', lean: 0, arms: f % 2 === 0 ? 'up' : 'upHalf', legs: 'stand', y: 0, oneHand: true };
       }
       case 'celebrate': {
         const f = Math.min(9, Math.floor((this.t / CELEBRATION_TIME) * 10));
@@ -69,14 +70,30 @@ export class Player {
       }
       default: {
         const f = Math.floor(globalT / 0.4) % 4;
-        return { view: 'side', lean: 0, arms: 'down', legs: 'stand', y: f >= 2 ? 1 : 0 };
+        return { view: 'side', lean: 0, arms: 'hold', legs: 'stand', y: f >= 2 ? 1 : 0 };
       }
     }
   }
 
   draw(ctx, globalT) {
     const p = this.pose(globalT);
-    drawFootballer(ctx, PLAYER_X, PLAYER_FEET - 24 + (p.y || 0), p);
+    const oy = PLAYER_FEET - 24 + (p.y || 0);
+    drawFootballer(ctx, PLAYER_X, oy, p);
+    if (this.state === 'celebrate') return; // launcher goes on his back for the SIUUU
+    // recoil: the tube kicks back along its axis right after a shot
+    const kick = this.state === 'release' ? Math.max(0, 3 - this.t * 20) : 0;
+    const h = this.heading;
+    const px = PLAYER_X + 10 - Math.cos(h) * kick, py = oy + 8 - Math.sin(h) * kick;
+    drawLauncher(ctx, px, py, h, this.loaded);
+    const grip = (g) => launcherPoint(px, py, h, g.u, g.v);
+    const t = grip(GRIP_TRIGGER), f = grip(GRIP_FRONT);
+    const shY = oy + 10;
+    pixelLine(ctx, PLAYER_X + 6, shY, t.x, t.y, PAL.brownD, 2);           // back arm to trigger
+    ctx.fillStyle = PAL.brown; ctx.fillRect(Math.round(t.x), Math.round(t.y), 2, 2);
+    if (!p.oneHand) {
+      pixelLine(ctx, PLAYER_X + 10, shY, f.x, f.y, PAL.brown, 2);         // front arm to fore-grip
+      ctx.fillStyle = PAL.orange; ctx.fillRect(PLAYER_X + 10, shY - 1, 2, 2); // sleeve
+    }
   }
 }
 
@@ -128,7 +145,8 @@ export function drawFootballer(ctx, ox, oy, p) {
   // ----- back arm (side view) -----
   if (side) {
     const sx = bodyX, sy = 9 + crouch;
-    if (p.arms === 'pull' || p.arms === 'forward') R.line(sx, sy, sx - 3, sy + 3, SKIN_D, 2);
+    if (p.arms === 'hold' || p.arms === 'up' || p.arms === 'upHalf') { /* drawn with the launcher */ }
+    else if (p.arms === 'pull' || p.arms === 'forward') R.line(sx, sy, sx - 3, sy + 3, SKIN_D, 2);
     else if (p.arms === 'up2') R.line(sx, sy, sx - 2, sy - 7, SKIN_D, 2);
     else if (p.arms === 'wide') R.line(sx, sy, sx - 4, sy + 4, SKIN_D, 2);
     else R(sx - 1, sy, 2, 5, SKIN_D);
@@ -178,6 +196,7 @@ export function drawFootballer(ctx, ox, oy, p) {
   if (side) {
     const sx = bodyX + bodyW - 1;
     switch (p.arms) {
+      case 'hold': break;
       case 'pull': R.line(sx, sy, sx + 4 + L, sy + 4, SKIN, 2); R(sx, sy, 2, 2, SHIRT); break;
       case 'forward': R.line(sx, sy, sx + 5, sy - 1, SKIN, 2); R(sx, sy, 2, 2, SHIRT); break;
       case 'up': R(sx, sy - 8, 2, 9, SKIN); R(sx - 1, sy - 9, 3, 2, SKIN); R(sx, sy, 2, 2, SHIRT); break;
