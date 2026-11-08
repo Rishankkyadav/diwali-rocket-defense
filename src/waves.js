@@ -6,7 +6,7 @@ export const rand = (a, b) => a + Math.random() * (b - a);
 export function waveParams(n) {
   if (n <= WAVES.length) {
     const w = WAVES[n - 1];
-    return { n, count: w.count, mix: w.mix, dist: w.dist, wind: w.wind, speedMul: 1, endless: false };
+    return { n, count: w.count, mix: w.mix, dist: w.dist, wind: w.wind, gap: w.gap, maxOn: w.maxOn, speedMul: 1, endless: false };
   }
   const last = WAVES[WAVES.length - 1];
   const k = n - WAVES.length; // 1, 2, 3 …
@@ -17,6 +17,8 @@ export function waveParams(n) {
     dist: last.dist,
     wind: Math.min(ENDLESS.windMax, last.wind + k * ENDLESS.windStep),
     speedMul: Math.min(ENDLESS.speedMulCap, Math.pow(ENDLESS.speedMulPerWave, k)),
+    gap: Math.max(ENDLESS.gapMin, last.gap - k * ENDLESS.gapStep),
+    maxOn: Math.min(ENDLESS.maxOnCap, last.maxOn + Math.floor(k / 2)),
     endless: true,
   };
 }

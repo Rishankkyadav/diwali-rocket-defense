@@ -244,3 +244,14 @@ diwali-rocket-defense/
 9. **Ship:** deploy as a static site (GitHub Pages, Netlify or Vercel) and share the link.
 
 Working with the CLI: put this doc in the repo as `GAME_DESIGN.md` and ask for one milestone at a time, for example "Read GAME_DESIGN.md and build milestone 2". Keep all tunable numbers in `config.js` so playtest changes are one-line edits.
+
+## v1.1 changes after playtesting (Nov 2026)
+
+The slingshot drag felt unintuitive and glitchy on trackpads, and the game was too easy, so these parts of the spec changed:
+
+- **Aim is golf-style** (modelled on Golf Clash and 3-click golf swing meters). You place a target reticle, and the game solves the launch angle along the low, direct trajectory to it. The full no-wind path is drawn as dots. Click to start a swing meter, then click again (or hold and release) when the needle is in the centre. The needle's offset from centre becomes a launch-angle error, up to ±10° at the edges, and is 0 inside the perfect zone (±7%). The needle speeds up each wave.
+- **Rocket physics:** fixed launch speed of 14 m/s, `THRUST` 16 m/s² for a `BURN_TIME` of 0.8 s, which gives a max range of about 55 m. Close shots fly nearly straight and only far ones arc. The aim angle can go from −85° to 85°, so you can shoot down off the roof.
+- **Spawning:** zombies walk in from the right edge. Each wave has a `gap` between spawns and a `maxOn` limit on how many can be on the street at once (2 → 5, rising to 7 in endless mode).
+- **Tuning:** zombie speeds are about 25% faster, and the splash radius dropped to 1.5 m and now hits every zombie in range.
+- **Art:** the rocket is now a 15×7 sprite (fins, banded body, nose cone) pre-rotated into 64 frames, with an exhaust flame.
+- **Speedster:** barks twice ("WOOF! WOOF!") after he flattens a zombie.

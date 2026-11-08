@@ -1,14 +1,16 @@
 import {
-  G, THRUST, BURN_TIME, DRAG_K, V_MIN, V_MAX, LAUNCH_POINT, MAX_FLIGHT, DT,
-  PX_PER_M, GROUND_Y, MAX_PULL, ANGLE_MIN, ANGLE_MAX, PREVIEW_DOT_DT, PREVIEW_FRACTION,
+  G, THRUST, BURN_TIME, DRAG_K, LAUNCH_SPEED, LAUNCH_POINT, MAX_FLIGHT, DT,
+  PX_PER_M, GROUND_Y, AIM_ANGLE_MIN, AIM_ANGLE_MAX, PREVIEW_DOT_DT,
 } from './config.js';
 
 // ---- Units ----
 export const toScreenX = (x) => x * PX_PER_M;
 export const toScreenY = (y) => GROUND_Y - y * PX_PER_M;
+export const toWorldX = (px) => px / PX_PER_M;
+export const toWorldY = (py) => (GROUND_Y - py) / PX_PER_M;
 export const LAUNCH_PX = { x: toScreenX(LAUNCH_POINT.x), y: toScreenY(LAUNCH_POINT.y) };
 
-export function makeRocketState(angleDeg, v0) {
+export function makeRocketState(angleDeg, v0 = LAUNCH_SPEED) {
   const a = (angleDeg * Math.PI) / 180;
   return {
     x: LAUNCH_POINT.x, y: LAUNCH_POINT.y,
@@ -17,7 +19,7 @@ export function makeRocketState(angleDeg, v0) {
   };
 }
 
-// Semi-implicit Euler, exactly as in the design doc.
+// Semi-implicit Euler, as in the design doc.
 export function stepRocket(r, wind, dt) {
   let ax = 0, ay = -G;
   if (r.burnLeft > 0) {                 // thrust along velocity
@@ -35,39 +37,57 @@ export function stepRocket(r, wind, dt) {
   r.t += dt;
 }
 
-// Turn a pull vector (screen px, anchor − pointer) into a shot.
-export function shotFromPull(dx, dy) {
-  const len = Math.min(Math.hypot(dx, dy), MAX_PULL);
-  const t = len / MAX_PULL;
-  // screen y points down; pulling the pointer *down* aims *up*
-  let ang = (Math.atan2(-dy, dx) * 180) / Math.PI;
-  if (ang > ANGLE_MAX || ang < ANGLE_MIN) {
-    // snap to whichever limit is closer around the circle, so the aim never jumps wildly
-    const toMax = (((ang - ANGLE_MAX) % 360) + 360) % 360;
-    const toMin = (((ANGLE_MIN - ang) % 360) + 360) % 360;
-    ang = toMax <= toMin ? ANGLE_MAX : ANGLE_MIN;
+// Height of a no-wind shot when it first reaches x = tx (null if it lands first).
+function heightAt(angle, tx, dt) {
+  const r = makeRocketState(angle);
+  while (r.t < MAX_FLIGHT) {
+    stepRocket(r, 0, dt);
+    if (r.x >= tx) return r.y;
+    if (r.y <= 0) return null;
   }
-  const v0 = V_MIN + (V_MAX - V_MIN) * t;
-  return { len, power: t, angle: ang, v0 };
+  return null;
 }
 
-// Simulate a full shot without wind (preview). Returns dots for the first 40% of flight.
-export function previewDots(angle, v0) {
-  const r = makeRocketState(angle, v0);
-  const pts = [{ x: r.x, y: r.y, t: 0 }];
-  let next = PREVIEW_DOT_DT;
-  while (r.t < MAX_FLIGHT && r.y > 0) {
-    stepRocket(r, 0, DT);
-    if (r.t >= next - 1e-9) { pts.push({ x: r.x, y: r.y, t: r.t }); next += PREVIEW_DOT_DT; }
+// Golf-style aim: given a target point (metres), find the launch angle whose
+// no-wind path passes through it. Takes the low, direct branch, so close
+// targets get a near-straight shot and far ones get a lob.
+export function solveAim(tx, ty) {
+  const COARSE = 1 / 60;
+  let prevA = null;
+  let best = { a: 40, h: -Infinity };
+  for (let a = AIM_ANGLE_MIN; a <= AIM_ANGLE_MAX; a += 0.5) {
+    const h = heightAt(a, tx, COARSE);
+    if (h !== null && h > best.h) best = { a, h };
+    if (h !== null && h >= ty) {
+      // bisect between the last angle that passed under the target and this one
+      let lo = prevA === null ? a - 0.5 : prevA, hi = a;
+      for (let i = 0; i < 14; i++) {
+        const mid = (lo + hi) / 2;
+        const hm = heightAt(mid, tx, DT);
+        if (hm !== null && hm >= ty) hi = mid; else lo = mid;
+      }
+      return { angle: hi, reachable: true };
+    }
+    prevA = a;
   }
-  pts.push({ x: r.x, y: Math.max(0, r.y), t: r.t, landed: r.y <= 0 }); // where it comes down
-  const cutoff = r.t * PREVIEW_FRACTION + 1e-9;
-  return pts.filter((p) => p.t <= cutoff);
+  return { angle: best.a, reachable: false };
+}
+
+// No-wind flight path for the preview: dots up to the target x (or landing).
+export function previewPath(angle, tx) {
+  const r = makeRocketState(angle);
+  const pts = [];
+  let next = PREVIEW_DOT_DT;
+  while (r.t < MAX_FLIGHT && r.y > 0 && r.x < tx) {
+    stepRocket(r, 0, DT);
+    if (r.t >= next) { pts.push({ x: r.x, y: Math.max(0, r.y) }); next += PREVIEW_DOT_DT; }
+  }
+  return pts;
 }
 
 // Full-flight simulation, used by tests / tuning.
-export function simulateShot(angle, v0, wind = 0) {
-  const r = makeRocketState(angle, v0);
+export function simulateShot(angle, wind = 0) {
+  const r = makeRocketState(angle);
   while (r.t < MAX_FLIGHT && r.y > 0) stepRocket(r, wind, DT);
   return { x: r.x, y: r.y, t: r.t };
 }

@@ -56,7 +56,7 @@ export function drawTitle(ctx, ui, t) {
   drawText(ctx, 'DEFEND YOUR ROOFTOP ON DIWALI NIGHT', W / 2, 96, { color: PAL.peach, align: 'center' });
   for (const b of ui.buttons) drawButton(ctx, b, ui.hover === b.id, b.id === 'play');
   drawText(ctx, `BEST ${ui.best}`, W / 2, 178, { color: PAL.gold, align: 'center' });
-  drawText(ctx, 'DRAG BACK AND RELEASE TO LAUNCH', W / 2, 194, { color: PAL.grey1, align: 'center' });
+  drawText(ctx, 'AIM, CLICK, THEN CLICK AGAIN ON GOLD', W / 2, 194, { color: PAL.grey1, align: 'center' });
   drawText(ctx, 'S / TAP SHOE: SPEEDSTER   ESC: PAUSE', W / 2, 205, { color: PAL.grey2, align: 'center' });
 }
 

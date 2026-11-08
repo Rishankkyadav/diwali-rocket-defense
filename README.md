@@ -8,16 +8,23 @@ Works on desktop (mouse) and phones (touch, landscape).
 
 ## How to play
 
-- **Drag back** from the rocket on the roof and **release** to launch, like a slingshot. The further you pull, the faster it flies. On phones you can start the drag anywhere on the screen.
-- The dotted arc shows the whole flight with a landing marker, but it ignores **wind**. Read the HUD arrow and the smoke plume to adjust.
-- You can aim **downward** from the roof, so zombies right by your door are still hittable.
-- **Direct hit**: 1 damage, ×2 points. **Splash** (within 2.5 m): 0.5 damage. A **miss** resets your streak, and the zombie stops to dance at you.
-- Three kills in a row charge **Chotu the speedster**. Tap the shoe icon (or press **S**) and he sprints out, flattens the current zombie (Tanks included) and barks about it.
+Aiming works like a golf game: you pick a target, then time a swing meter.
+
+1. **Aim:** move the mouse (or drag a finger) to put the crosshair where you want the rocket to go. The dotted path shows how it will fly. Close shots fly almost straight, long ones arc. The path ignores **wind**, so check the HUD arrow and the smoke plume and adjust.
+2. **Swing:** click (or press Space, or tap **FIRE** on a phone) and a needle starts sweeping across the meter.
+3. **Release:** click again when the needle is in the **gold** zone for a perfect shot. Stopping left of centre sends the shot low, right sends it high. You can also press, hold and let go.
+
+- Zombies keep walking while the rocket flies, so **aim ahead of them**.
+- Later waves send several zombies at once, and the needle gets faster every wave.
+- **Direct hit**: 1 damage, ×2 points. **Splash** (within 1.5 m): 0.5 damage to everyone nearby. A **miss** resets your streak, and the nearest zombie dances at you.
+- Three kills in a row charge **Chotu the speedster**. Tap the shoe icon (or press **S**) and he sprints out, flattens the front zombie (Tanks included) and barks about it.
 - Zombies that reach the door cost a life. You get a bonus life every 3 waves (max 5). After wave 5 the game switches to **endless mode**.
 
 | Key | Action |
 |---|---|
-| Mouse / touch drag | Aim and fire |
+| Mouse move / touch drag | Aim |
+| Click / Space / FIRE button | Start the swing, then click again to release |
+| Esc (during a swing) | Cancel the swing |
 | S | Speedster power-up |
 | Esc / P | Pause |
 | M | Mute |

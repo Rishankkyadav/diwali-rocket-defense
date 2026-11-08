@@ -1,18 +1,21 @@
 // Game state machine: title → play (waves, pause) → game over.
+// Aiming is golf-style: place a target reticle, then time a swing meter.
 import * as C from './config.js';
 import { PAL, RAMPS, W } from './config.js';
 import * as audio from './audio.js';
-import { LAUNCH_PX, shotFromPull, previewDots, toScreenX, toScreenY, circleHitsRect, distPointRect } from './physics.js';
-import { waveParams, buildWave, rollWind, rand } from './waves.js';
+import {
+  LAUNCH_PX, solveAim, previewPath, toScreenX, toScreenY, toWorldX, toWorldY, circleHitsRect, distPointRect,
+} from './physics.js';
+import { waveParams, buildWave, rollWind } from './waves.js';
 import { Player } from './entities/player.js';
 import { Zombie } from './entities/zombie.js';
 import { Rocket, drawRocketSprite } from './entities/rocket.js';
 import { Speedster } from './entities/speedster.js';
 import { FX, AmbientFireworks } from './fx/particles.js';
 import { Background } from './fx/background.js';
-import { drawHUD, drawBanner, drawOffscreenRocket, HUD_BUTTONS, inRect } from './ui/hud.js';
+import { drawHUD, drawBanner, drawOffscreenRocket, drawSwingMeter, HUD_BUTTONS, inRect } from './ui/hud.js';
 import { titleButtons, pauseButtons, gameOverButtons, hitButton, drawTitle, drawPause, drawGameOver } from './ui/screens.js';
-import { pixelLine, ringCircle } from './gfx.js';
+import { drawText } from './ui/font.js';
 
 function loadSave() {
   try { return JSON.parse(localStorage.getItem(C.STORAGE_KEY)) || {}; } catch { return {}; }
@@ -22,6 +25,12 @@ function writeSave(obj) {
 }
 
 const TAUNT_LINES = ['NYAH NYAH!', 'MISSED!', 'HEH HEH!'];
+
+// Needle position for a swing that has run for t seconds: starts at the left edge, ping-pongs.
+export function needleAt(t, period) {
+  const u = (t / period) % 1;
+  return u < 0.5 ? -1 + 4 * u : 3 - 4 * u;
+}
 
 export class Game {
   constructor() {
@@ -44,19 +53,24 @@ export class Game {
     this.lives = C.START_LIVES;
     this.score = 0;
     this.kills = 0;
+    this.shots = 0;
     this.wave = 0;
     this.params = waveParams(1);
     this.queue = [];
-    this.zombie = null;
+    this.zombies = [];
+    this.waveActive = false;
+    this.spawnClock = 0;
     this.rocket = null;
     this.speedster = null;
     this.wind = 0;
     this.streak = 0;
     this.streakFlash = 0;
-    this.meter = 0;
+    this.meter = 0;          // power-up meter segments
     this.charged = false;
     this.inputLock = 0;
-    this.aim = null;
+    this.swing = null;       // active swing meter
+    this.touchAiming = false;
+    this.setAim(25, 0.9);
     this.timers = [];
     this.bannerT = 0;
     this.bannerTotal = 1;
@@ -71,6 +85,23 @@ export class Game {
 
   after(sec, fn) { this.timers.push({ t: sec, fn }); }
   streakMult() { return Math.min(C.STREAK_CAP, 1 + C.STREAK_STEP * this.streak); }
+  meterPeriod() { return Math.max(C.METER_PERIOD_MIN, C.METER_PERIOD_START - C.METER_PERIOD_PER_WAVE * (this.wave - 1)); }
+  frontZombie() {
+    let f = null;
+    for (const z of this.zombies) if (!z.dead && (!f || z.x < f.x)) f = z;
+    return f;
+  }
+
+  // ---------- aim ----------
+  setAim(x, y) {
+    x = Math.max(C.LAUNCH_POINT.x + 0.6, Math.min(C.FIELD_MAX_X + 2, x));
+    y = Math.max(0, Math.min(C.AIM_MAX_HEIGHT, y));
+    if (this.aimPt && Math.abs(this.aimPt.x - x) < 0.04 && Math.abs(this.aimPt.y - y) < 0.04) return;
+    this.aimPt = { x, y };
+    this.solution = solveAim(x, y);
+    this.path = previewPath(this.solution.angle, x);
+  }
+  aimFromScreen(px, py) { this.setAim(toWorldX(px), toWorldY(py)); }
 
   // ---------- flow ----------
   startGame() {
@@ -87,25 +118,35 @@ export class Game {
     this.queue = buildWave(this.params);
     this.bannerT = this.bannerTotal = C.WAVE_BANNER_TIME;
     this.bannerSub = sub || (this.params.wind ? `WIND UP TO ${this.params.wind}` : '');
-    this.wind = 0;
+    this.waveActive = false;
     audio.waveStart();
-    this.after(C.WAVE_BANNER_TIME, () => this.spawnNext());
+    this.after(C.WAVE_BANNER_TIME, () => { this.waveActive = true; this.spawnNext(); });
   }
 
   spawnNext() {
     if (this.mode !== 'play' || !this.queue.length) return;
     const type = this.queue.shift();
-    const x = C.FIELD_MAX_X + 0.3; // enter from the right edge
-    this.zombie = new Zombie(type, x, this.params.speedMul);
+    this.zombies.push(new Zombie(type, C.FIELD_MAX_X + 0.3, this.params.speedMul));
     this.wind = rollWind(this.params);
-    const c = this.zombie.centerPx;
-    this.fx.particles.burst(c.x, C.GROUND_Y - 1, 14, [RAMPS.dirt], { speed: [20, 50], life: [0.4, 0.8], gravity: 160, drag: 2, flicker: false });
+    this.spawnClock = 0;
   }
 
-  zombieResolved() {
-    this.zombie = null;
-    if (this.queue.length) this.after(C.NEXT_SPAWN_DELAY, () => this.spawnNext());
-    else this.after(C.NEXT_SPAWN_DELAY, () => this.waveComplete());
+  updateSpawning(dt) {
+    if (!this.waveActive) return;
+    this.spawnClock += dt;
+    const alive = this.zombies.length;
+    if (this.queue.length) {
+      const need = alive === 0 ? C.NEXT_SPAWN_DELAY : this.params.gap;
+      if (alive < this.params.maxOn && this.spawnClock >= need) this.spawnNext();
+    } else if (alive === 0) {
+      this.waveActive = false;
+      this.after(C.NEXT_SPAWN_DELAY, () => this.waveComplete());
+    }
+  }
+
+  removeZombie(z) {
+    this.zombies = this.zombies.filter((o) => o !== z);
+    if (this.zombies.length === 0) this.spawnClock = 0;
   }
 
   waveComplete() {
@@ -123,7 +164,7 @@ export class Game {
 
   gameOver() {
     this.mode = 'gameover';
-    this.cancelAim();
+    this.cancelSwing();
     this.newBest = this.score > this.save.best;
     if (this.newBest) this.save.best = this.score;
     writeSave(this.save);
@@ -132,7 +173,7 @@ export class Game {
 
   pause() {
     if (this.mode !== 'play') return;
-    this.cancelAim();
+    this.cancelSwing();
     this.mode = 'pause';
   }
   resume() { if (this.mode === 'pause') this.mode = 'play'; }
@@ -142,7 +183,7 @@ export class Game {
 
   // ---------- input ----------
   canFire() {
-    return this.mode === 'play' && this.zombie && !this.zombie.dead && !this.rocket && !this.speedster && this.inputLock <= 0;
+    return this.mode === 'play' && this.zombies.length > 0 && !this.rocket && !this.speedster && this.inputLock <= 0;
   }
 
   handleEvents(events) {
@@ -153,7 +194,7 @@ export class Game {
         case 'down': this.onDown(e); break;
         case 'move': this.onMove(e); break;
         case 'up': this.onUp(e); break;
-        case 'cancel': this.cancelAim(); break;
+        case 'cancel': this.touchAiming = false; break;
         case 'blur': this.pause(); break;
       }
     }
@@ -185,10 +226,26 @@ export class Game {
       case 'gameover': if (code === 'Enter' || code === 'Space') this.onMenuAction('retry'); break;
       case 'pause': if (code === 'Escape' || code === 'KeyP' || code === 'Enter' || code === 'Space') this.resume(); break;
       case 'play':
-        if (code === 'Escape' || code === 'KeyP') this.pause();
+        if (code === 'Escape') { if (this.swing) this.cancelSwing(); else this.pause(); }
+        else if (code === 'KeyP') this.pause();
         else if (code === 'KeyS') this.tryPowerup();
+        else if (code === 'Space' || code === 'Enter') this.swingButton(false);
         break;
     }
+  }
+
+  // Start the swing, or (if it's already running) release the shot.
+  swingButton(byHold) {
+    if (this.swing) { this.fire(); return; }
+    if (!this.canFire()) return;
+    this.swing = { t: 0, byHold };
+    this.player.setPull(0.7);
+    audio.creakStart();
+  }
+
+  cancelSwing() {
+    if (this.swing) { this.swing = null; this.player.cancelPull(); }
+    audio.creakStop();
   }
 
   onDown(e) {
@@ -199,16 +256,15 @@ export class Game {
     }
     if (inRect(e, HUD_BUTTONS.pause)) { this.pause(); return; }
     if (inRect(e, HUD_BUTTONS.power)) { this.tryPowerup(); return; }
-    if (!this.canFire()) return;
-    // Grab on/near the rocket (24 px), or anywhere else as a relative drag — handy on phones
-    // where the house sits right at the screen edge.
-    const near = Math.hypot(e.x - LAUNCH_PX.x, e.y - LAUNCH_PX.y) <= C.GRAB_RADIUS;
-    const ox = near ? LAUNCH_PX.x : e.x, oy = near ? LAUNCH_PX.y : e.y;
-    this.aim = { ox, oy, px: e.x, py: e.y, shot: shotFromPull(0, 0) };
-    this.aim.shot = shotFromPull(ox - e.x, oy - e.y);
-    this.player.setPull(this.aim.shot.power);
-    audio.creakStart();
-    audio.creakSet(this.aim.shot.power);
+    if (this.touchUsed && inRect(e, HUD_BUTTONS.fire)) { this.swingButton(true); return; }
+    if (this.swing) { this.fire(); return; }           // second click releases
+    if (e.pointerType === 'touch') {                   // touch: drag to place the reticle
+      this.touchAiming = true;
+      this.aimFromScreen(e.x, e.y - 12);               // sit above the finger so you can see it
+      return;
+    }
+    this.aimFromScreen(e.x, e.y);
+    this.swingButton(true);                            // mouse/trackpad: click starts the swing
   }
 
   onMove(e) {
@@ -217,43 +273,44 @@ export class Game {
       this.hover = b ? b.id : null;
       return;
     }
-    if (!this.aim) return;
-    this.aim.px = e.x; this.aim.py = e.y;
-    this.aim.shot = shotFromPull(this.aim.ox - e.x, this.aim.oy - e.y);
-    this.player.setPull(this.aim.shot.power);
-    audio.creakSet(this.aim.shot.power);
+    if (this.swing) return;                            // aim locks while the meter runs
+    if (this.touchAiming) this.aimFromScreen(e.x, e.y - 12);
+    else if (!this.touchUsed || e.pointerType !== 'touch') this.aimFromScreen(e.x, e.y);
   }
 
-  onUp(e) {
-    if (!this.aim) return;
-    this.onMove(e);
-    const shot = this.aim.shot;
-    this.aim = null;
+  onUp() {
+    this.touchAiming = false;
+    // hold-and-release also works: a long press fires on release
+    if (this.swing && this.swing.byHold && this.swing.t >= C.HOLD_THRESHOLD) this.fire();
+  }
+
+  fire() {
+    if (!this.swing) return;
+    const e = needleAt(this.swing.t, this.meterPeriod());
+    this.swing = null;
     audio.creakStop();
-    if (shot.len < C.MIN_PULL || !this.canFire()) { this.player.cancelPull(); return; }
-    this.fire(shot);
-  }
-
-  cancelAim() {
-    if (this.aim) { this.aim = null; this.player.cancelPull(); }
-    audio.creakStop();
-  }
-
-  fire(shot) {
-    this.rocket = new Rocket(shot.angle, shot.v0);
-    this.lastShot = shot;
+    if (!this.canFire()) { this.player.cancelPull(); return; }
+    const perfect = Math.abs(e) <= C.METER_PERFECT;
+    const err = perfect ? 0 : e * C.METER_MAX_ERROR;
+    this.rocket = new Rocket(this.solution.angle + err);
+    this.shots++;
     this.player.release();
     audio.launch();
-    this.fx.particles.burst(LAUNCH_PX.x, LAUNCH_PX.y, 10, [RAMPS.flame, RAMPS.smoke], { speed: [10, 40], life: [0.2, 0.5], gravity: 20, flicker: false });
+    const label = perfect ? 'PERFECT!' : Math.abs(e) <= C.METER_GOOD ? 'GOOD' : e > 0 ? 'TOO HIGH!' : 'TOO LOW!';
+    const col = perfect ? PAL.cyan : Math.abs(e) <= C.METER_GOOD ? PAL.green : PAL.red2;
+    this.fx.text(label, 70, 108, { color: col, life: 0.9, vy: -10 });
+    this.fx.particles.burst(LAUNCH_PX.x, LAUNCH_PX.y, 12, [RAMPS.flame, RAMPS.smoke], { speed: [10, 40], life: [0.2, 0.5], gravity: 20, flicker: false });
   }
 
   tryPowerup() {
     if (this.mode !== 'play' || !this.charged) return;
-    if (!this.zombie || this.zombie.dead || this.rocket || this.speedster) return;
-    this.cancelAim();
+    const target = this.frontZombie();
+    if (!target || this.rocket || this.speedster) return;
+    this.cancelSwing();
     this.charged = false;
     this.meter = 0;
     this.speedster = new Speedster();
+    this.speedster.target = target;
     audio.sprint();
     this.fx.text('CHOTU GO!', 60, 196, { color: PAL.cyan });
   }
@@ -268,7 +325,6 @@ export class Game {
     this.player.update(dt);
     if (this.mode !== 'play') return;
 
-    // timers
     if (this.timers.length) {
       const due = [];
       for (const tm of this.timers) { tm.t -= dt; if (tm.t <= 0) due.push(tm); }
@@ -278,23 +334,29 @@ export class Game {
     if (this.inputLock > 0) this.inputLock -= dt;
     if (this.streakFlash > 0) this.streakFlash -= dt;
     if (this.shakeT > 0) this.shakeT -= dt;
+    if (this.swing) {
+      this.swing.t += dt;
+      audio.creakSet((needleAt(this.swing.t, this.meterPeriod()) + 1) / 2);
+      if (!this.canFire()) this.cancelSwing();
+    }
 
-    const z = this.zombie;
-    if (z) {
+    this.updateSpawning(dt);
+    for (const z of [...this.zombies]) {
       z.update(dt);
-      if (z.reachedDoor) this.doorBreach(z);
+      if (z.reachedDoor && !z.dead) this.doorBreach(z);
     }
     if (this.rocket) {
       this.rocket.step(this.wind, this.fx);
       this.checkRocket();
     }
     if (this.speedster) {
-      for (const ev of this.speedster.update(dt, this.zombie, this.fx)) {
+      const target = this.speedster.target;
+      for (const ev of this.speedster.update(dt, target, this.fx)) {
         if (ev === 'hit') {
           audio.skid();
-          if (this.zombie && !this.zombie.dead) {
-            const c = this.zombie.centerPx;
-            this.killZombie(this.zombie, 'speedster');
+          if (target && !target.dead) {
+            const c = target.centerPx;
+            this.killZombie(target, 'speedster');
             audio.bark();
             this.speedster.barkT = 0.6;
             this.fx.text('WOOF! WOOF!', Math.max(40, Math.min(W - 40, c.x)), c.y - 40, { color: PAL.white, scale: 2, life: 1.3, vy: -10, outline: PAL.blue3 });
@@ -307,29 +369,37 @@ export class Game {
 
   checkRocket() {
     const s = this.rocket.s;
-    const z = this.zombie;
-    if (z && !z.dead && circleHitsRect(s.x, s.y, C.ROCKET_RADIUS, z.rect)) this.resolveRocket('direct', s.x, s.y);
-    else if (s.y <= 0) this.resolveRocket('ground', s.x, 0);
-    else if (this.rocket.timedOut) this.resolveRocket('fizzle', s.x, s.y);
+    const sorted = this.zombies.filter((z) => !z.dead).sort((a, b) => a.x - b.x);
+    const hit = sorted.find((z) => circleHitsRect(s.x, s.y, C.ROCKET_RADIUS, z.rect));
+    if (hit) this.resolveRocket('direct', s.x, s.y, hit);
+    else if (s.y <= 0) this.resolveRocket('ground', s.x, 0, null);
+    else if (this.rocket.timedOut) this.resolveRocket('fizzle', s.x, s.y, null);
   }
 
-  resolveRocket(kind, x, y) {
+  resolveRocket(kind, x, y, direct) {
     this.rocket = null;
     this.inputLock = C.INPUT_LOCK_AFTER;
     const sx = toScreenX(x), sy = toScreenY(y);
-    const z = this.zombie;
-    if (kind === 'direct') {
-      this.hitZombie(z, C.DAMAGE_DIRECT, C.KNOCKBACK_DIRECT, true, sx, sy);
-      return;
+    let anyHit = false;
+    if (direct) {
+      this.hitZombie(direct, C.DAMAGE_DIRECT, C.KNOCKBACK_DIRECT, true, sx, sy);
+      anyHit = true;
     }
-    // impact burst on the ground (or a fizzle mid-air)
-    this.fx.particles.burst(sx, sy - 1, 16, [RAMPS.gold, RAMPS.dirt], { speed: [20, 60], life: [0.3, 0.7], gravity: 140, drag: 2 });
-    if (z && !z.dead && distPointRect(x, y, z.rect) <= C.SPLASH_RADIUS) {
-      this.fx.explosion(sx, sy - 2);
-      this.hitZombie(z, C.DAMAGE_SPLASH, C.KNOCKBACK_SPLASH, false, sx, sy);
-    } else {
+    // splash everyone else nearby
+    for (const z of [...this.zombies]) {
+      if (z === direct || z.dead) continue;
+      if (distPointRect(x, y, z.rect) <= C.SPLASH_RADIUS) {
+        this.hitZombie(z, C.DAMAGE_SPLASH, C.KNOCKBACK_SPLASH, false, sx, sy);
+        anyHit = true;
+      }
+    }
+    if (!direct) {
+      this.fx.particles.burst(sx, sy - 1, 16, [RAMPS.gold, RAMPS.dirt], { speed: [20, 60], life: [0.3, 0.7], gravity: 140, drag: 2 });
+      if (anyHit) this.fx.explosion(sx, sy - 2);
+    }
+    if (!anyHit) {
       audio.groundHit();
-      this.miss();
+      this.miss(x);
     }
   }
 
@@ -343,7 +413,7 @@ export class Game {
     this.fx.particles.burst(sx, sy, 20, [RAMPS.gold, RAMPS.magenta], { speed: [20, 70], life: [0.3, 0.7] });
     const c = z.centerPx;
     this.fx.text(direct ? 'HIT!' : 'SPLASH!', c.x, c.y - z.def.sh / 2 - 14, { color: PAL.white });
-    this.shakeT = 0.1;
+    this.shakeT = Math.max(this.shakeT, 0.1);
   }
 
   killZombie(z, how) {
@@ -362,11 +432,9 @@ export class Game {
           this.charged = true;
           this.meter = C.POWERUP_SEGMENTS;
           audio.powerReady();
-          this.after(0.5, () => this.fx.text('SPEEDSTER READY!', W / 2, 52, { color: PAL.cyan, life: 1.6, vy: -4 }));
         }
       }
     }
-    // juice: hit-stop, shake, firework burst
     this.hitStop = C.HIT_STOP;
     this.shakeT = C.SHAKE_TIME;
     const n = C.KILL_PARTICLES[0] + Math.floor(Math.random() * (C.KILL_PARTICLES[1] - C.KILL_PARTICLES[0] + 1));
@@ -377,21 +445,24 @@ export class Game {
     audio.kill();
     this.player.celebrate();
     this.after(0.25, () => { audio.siuuu(); this.fx.text('SIUUU!', 46, 126, { color: PAL.yellow, scale: 2, life: 1.2, vy: -8, outline: PAL.rust }); });
-    this.zombieResolved();
+    this.removeZombie(z);
   }
 
-  miss() {
+  miss(x) {
     this.streak = 0;
     if (!this.charged) this.meter = 0;
-    const z = this.zombie;
-    if (z && !z.dead && z.taunt()) {
-      audio.taunt(z.tauntKind);
-      const c = z.centerPx;
-      this.fx.text(TAUNT_LINES[z.tauntKind], Math.min(W - 30, c.x), c.y - z.def.sh / 2 - 14, { color: PAL.green, life: 1.4, vy: -6 });
+    // the zombie closest to where it landed gets to gloat
+    let near = null;
+    for (const z of this.zombies) if (!z.dead && (!near || Math.abs(z.x - x) < Math.abs(near.x - x))) near = z;
+    if (near && near.taunt()) {
+      audio.taunt(near.tauntKind);
+      const c = near.centerPx;
+      this.fx.text(TAUNT_LINES[near.tauntKind], Math.max(30, Math.min(W - 30, c.x)), c.y - near.def.sh / 2 - 14, { color: PAL.green, life: 1.4, vy: -6 });
     }
   }
 
   doorBreach(z) {
+    z.dead = true;
     this.lives--;
     this.streak = 0;
     audio.doorKnock();
@@ -399,12 +470,12 @@ export class Game {
     const c = z.centerPx;
     this.fx.particles.burst(c.x, c.y, 24, [RAMPS.smoke, RAMPS.green], { speed: [20, 60], life: [0.4, 0.9], gravity: -10 });
     this.fx.text('-1 LIFE', 60, 210, { color: PAL.red2, life: 1.4 });
+    this.removeZombie(z);
     if (this.lives <= 0) {
-      this.zombie = null;
+      this.lives = 0;
+      this.waveActive = false;
       this.timers = [];
       this.after(1.2, () => this.gameOver());
-    } else {
-      this.zombieResolved();
     }
   }
 
@@ -422,19 +493,24 @@ export class Game {
     ctx.translate(sx, sy);
     this.bg.drawNear(ctx, this.t);
     this.bg.drawHouse(ctx, this.t);
-    if (this.zombie) this.zombie.draw(ctx);
+    for (const z of [...this.zombies].sort((a, b) => b.x - a.x)) z.draw(ctx);
     if (this.speedster) this.speedster.draw(ctx);
     this.player.draw(ctx, this.t);
-    this.drawLauncher(ctx);
+    this.drawAim(ctx);
     if (this.rocket) this.rocket.draw(ctx, this.t);
     this.fx.drawWorld(ctx);
     this.fx.drawTexts(ctx);
     ctx.restore();
 
     if (this.mode !== 'title') {
+      if (this.swing) drawSwingMeter(ctx, needleAt(this.swing.t, this.meterPeriod()), this.t);
       drawHUD(ctx, this, this.t);
       drawBanner(ctx, this, this.t);
       if (this.rocket) drawOffscreenRocket(ctx, toScreenX(this.rocket.s.x), toScreenY(this.rocket.s.y));
+      if (this.mode === 'play' && this.wave === 1 && this.shots < 2 && this.bannerT <= 0) {
+        const msg = this.touchUsed ? 'DRAG TO AIM, TAP FIRE, TAP AGAIN ON GOLD' : 'AIM WITH THE MOUSE, CLICK, THEN CLICK AGAIN ON GOLD';
+        drawText(ctx, msg, W / 2, 50, { color: PAL.white, outline: PAL.black, align: 'center' });
+      }
     }
     const ui = { buttons: this.menuButtons(), hover: this.hover, best: this.save.best, score: this.score, wave: this.wave, kills: this.kills, newBest: this.newBest };
     if (this.mode === 'title') drawTitle(ctx, ui, this.t);
@@ -442,50 +518,41 @@ export class Game {
     else if (this.mode === 'gameover') drawGameOver(ctx, ui, this.t);
   }
 
-  drawLauncher(ctx) {
+  // Golf-style aim: rocket on the launcher points along the solved angle,
+  // dotted no-wind path to the reticle, and the reticle itself.
+  drawAim(ctx) {
     if (this.rocket || this.speedster) return;
     const ax = LAUNCH_PX.x, ay = LAUNCH_PX.y;
-    if (this.aim) {
-      const { shot } = this.aim;
-      const a = (shot.angle * Math.PI) / 180;
-      // rocket sits back along the (clamped) aim direction, like a slingshot pouch
-      const rx = Math.round(ax - Math.cos(a) * shot.len * 0.5);
-      const ry = Math.round(ay + Math.sin(a) * shot.len * 0.5);
-      const col = shot.power < 0.6 ? PAL.gold : shot.power < 0.85 ? PAL.orange : PAL.red2;
-      // preview dots: real physics, no wind, first 40 % of the flight
-      const dots = previewDots(shot.angle, shot.v0);
-      // big outlined dots so they read against any part of the sky or skyline
-      const blink = Math.floor(this.t * 8);
-      dots.forEach((p, i) => {
-        if (i < 1) return;
-        const x = Math.round(toScreenX(p.x)) - 1, y = Math.round(toScreenY(p.y)) - 1;
-        ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, 4, 4);
-        ctx.fillStyle = (i + blink) % 4 === 0 ? PAL.cyan : i % 2 ? PAL.white : PAL.yellow;
-        ctx.fillRect(x, y, 2, 2);
-      });
-      const end = dots[dots.length - 1];
-      if (end && end.landed) { // landing marker on the street
-        const lx = Math.round(toScreenX(end.x));
-        ctx.fillStyle = PAL.black; ctx.fillRect(lx - 4, C.GROUND_Y - 1, 9, 3);
-        ctx.fillStyle = PAL.red2; ctx.fillRect(lx - 3, C.GROUND_Y, 7, 1);
-        ctx.fillStyle = PAL.white; ctx.fillRect(lx, C.GROUND_Y - 1, 1, 3);
-      }
-      // stretched launch line + power ring
-      pixelLine(ctx, ax, ay, rx, ry, col);
-      const r = 7;
-      const steps = 24, lit = Math.round(steps * shot.power);
-      for (let i = 0; i < steps; i++) {
-        const ang = -Math.PI / 2 + (i / steps) * Math.PI * 2;
-        ctx.fillStyle = i < lit ? col : PAL.navy2;
-        ctx.fillRect(Math.round(rx + Math.cos(ang) * r), Math.round(ry + Math.sin(ang) * r), 1, 1);
-      }
-      drawRocketSprite(ctx, rx, ry, -a, false, this.t);
-    } else if (this.mode !== 'play' || this.inputLock <= 0) {
-      drawRocketSprite(ctx, ax, ay - 1, -Math.PI / 3, false, this.t);
-      if (this.canFire()) {
-        const pulse = Math.floor(this.t * 3) % 2;
-        ringCircle(ctx, ax, ay - 1, 6 + pulse, pulse ? PAL.yellow : PAL.gold, 1, 3);
-      }
+    const ang = (this.solution.angle * Math.PI) / 180;
+    if (this.mode !== 'play' || this.inputLock <= 0) {
+      drawRocketSprite(ctx, ax, ay - 1, this.mode === 'play' ? -ang : -Math.PI / 3, false, this.t);
     }
+    if (this.mode !== 'play' || !this.zombies.length || this.inputLock > 0) return;
+
+    const ok = this.solution.reachable;
+    const blink = Math.floor(this.t * 8);
+    this.path.forEach((p, i) => {
+      if (i < 3) return;
+      const x = Math.round(toScreenX(p.x)) - 1, y = Math.round(toScreenY(p.y)) - 1;
+      ctx.fillStyle = PAL.black; ctx.fillRect(x - 1, y - 1, 4, 4);
+      ctx.fillStyle = !ok ? PAL.rose : (i + blink) % 4 === 0 ? PAL.cyan : i % 2 ? PAL.white : PAL.yellow;
+      ctx.fillRect(x, y, 2, 2);
+    });
+    // reticle
+    const rx = Math.round(toScreenX(this.aimPt.x)), ry = Math.round(toScreenY(this.aimPt.y));
+    const col = !ok ? PAL.red2 : this.swing ? PAL.yellow : PAL.white;
+    const r = this.swing ? 5 : 6 + (Math.floor(this.t * 3) % 2);
+    ctx.fillStyle = PAL.black;
+    ctx.fillRect(rx - r - 1, ry - 1, r * 2 + 3, 3); ctx.fillRect(rx - 1, ry - r - 1, 3, r * 2 + 3);
+    ctx.fillStyle = col;
+    ctx.fillRect(rx - r, ry, r - 2, 1); ctx.fillRect(rx + 3, ry, r - 2, 1);
+    ctx.fillRect(rx, ry - r, 1, r - 2); ctx.fillRect(rx, ry + 3, 1, r - 2);
+    ctx.fillRect(rx, ry, 1, 1);
+    for (const [cx, cy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      ctx.fillRect(rx + cx * r, ry + cy * r, 1, 1);
+      ctx.fillRect(rx + cx * (r - 1), ry + cy * r, 1, 1);
+      ctx.fillRect(rx + cx * r, ry + cy * (r - 1), 1, 1);
+    }
+    if (!ok) drawText(ctx, 'OUT OF RANGE', rx, ry - r - 10, { color: PAL.red2, outline: PAL.black, align: 'center' });
   }
 }

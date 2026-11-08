@@ -12,28 +12,31 @@ export const FIELD_MAX_X = 48;        // m — right edge of the screen
 
 // ---- Rocket physics (metres, y up) ----
 export const G = 9.81;
-export const THRUST = 12;
-export const BURN_TIME = 0.5;
+export const THRUST = 16;             // longer, stronger burn → close shots fly almost straight
+export const BURN_TIME = 0.8;
 export const DRAG_K = 0.01;
-export const V_MIN = 4;
-export const V_MAX = 16;
+export const LAUNCH_SPEED = 14;       // m/s — fixed; you aim at a target, the game solves the angle
 export const LAUNCH_POINT = { x: 2.5, y: 8.5 };
 export const ROCKET_RADIUS = 0.3;
 export const MAX_FLIGHT = 6;
 export const DT = 1 / 120;
 export const MAX_STEPS_PER_FRAME = 5;
 
-// ---- Controls ----
-export const GRAB_RADIUS = 24;        // px native
-export const MAX_PULL = 60;           // px native
-export const MIN_PULL = 6;            // px — less than this cancels
-export const ANGLE_MIN = -60;         // degrees (negative = aim down from the roof)
-export const ANGLE_MAX = 85;
-export const PREVIEW_DOT_DT = 0.06;   // s between preview dots
-export const PREVIEW_FRACTION = 1.0;  // fraction of flight shown (still ignores wind)
+// ---- Controls: golf-style aim + swing meter ----
+export const AIM_ANGLE_MIN = -85;     // degrees; negative = shooting down off the roof
+export const AIM_ANGLE_MAX = 85;
+export const AIM_MAX_HEIGHT = 18;     // m — reticle can't go above this
+export const PREVIEW_DOT_DT = 0.045;  // s between path dots
+export const METER_PERIOD_START = 1.0;   // s for a full left→right→left sweep in wave 1
+export const METER_PERIOD_PER_WAVE = 0.06;
+export const METER_PERIOD_MIN = 0.5;
+export const METER_PERFECT = 0.07;    // |needle| inside this = perfect, zero error
+export const METER_GOOD = 0.25;       // drawn as the green zone
+export const METER_MAX_ERROR = 10;    // degrees of launch-angle error at the meter edge (linear in needle offset)
+export const HOLD_THRESHOLD = 0.22;   // s — press longer than this and releasing fires (hold mode)
 
 // ---- Combat ----
-export const SPLASH_RADIUS = 2.5;     // m from nearest point of hitbox
+export const SPLASH_RADIUS = 1.5;     // m from nearest point of hitbox
 export const DAMAGE_DIRECT = 1;
 export const DAMAGE_SPLASH = 0.5;
 export const KNOCKBACK_DIRECT = 1.5;  // m, divided by weight
@@ -65,19 +68,19 @@ export const SPEEDSTER_SKID_TIME = 0.35;
 
 // ---- Zombies ----
 export const ZOMBIES = {
-  runner: { w: 0.6, h: 1.2, sw: 12, sh: 14, speed: 2.4, hp: 1, points: 100, weight: 0.7 },
-  walker: { w: 0.8, h: 1.8, sw: 16, sh: 20, speed: 1.3, hp: 1, points: 50,  weight: 1.0 },
-  brute:  { w: 1.2, h: 2.3, sw: 20, sh: 26, speed: 0.8, hp: 2, points: 150, weight: 1.6 },
-  tank:   { w: 1.6, h: 2.9, sw: 26, sh: 32, speed: 0.5, hp: 3, points: 300, weight: 3.0 },
+  runner: { w: 0.6, h: 1.2, sw: 12, sh: 14, speed: 3.4, hp: 1, points: 100, weight: 0.7 },
+  walker: { w: 0.8, h: 1.8, sw: 16, sh: 20, speed: 2.0, hp: 1, points: 50,  weight: 1.0 },
+  brute:  { w: 1.2, h: 2.3, sw: 20, sh: 26, speed: 1.25, hp: 2, points: 150, weight: 1.6 },
+  tank:   { w: 1.6, h: 2.9, sw: 26, sh: 32, speed: 0.85, hp: 3, points: 300, weight: 3.0 },
 };
 export const SPEED_JITTER = 0.10;
 
 export const WAVES = [
-  { count: 5, mix: { walker: 100, runner: 0,  brute: 0,  tank: 0  }, dist: [18, 30], wind: 0 },
-  { count: 6, mix: { walker: 70,  runner: 30, brute: 0,  tank: 0  }, dist: [20, 36], wind: 0 },
-  { count: 7, mix: { walker: 50,  runner: 30, brute: 20, tank: 0  }, dist: [22, 40], wind: 1.5 },
-  { count: 8, mix: { walker: 30,  runner: 35, brute: 35, tank: 0  }, dist: [24, 42], wind: 3 },
-  { count: 9, mix: { walker: 20,  runner: 30, brute: 30, tank: 20 }, dist: [26, 44], wind: 4 },
+  { count: 5, mix: { walker: 100, runner: 0,  brute: 0,  tank: 0  }, dist: [18, 30], wind: 0,   gap: 5, maxOn: 2 },
+  { count: 6, mix: { walker: 70,  runner: 30, brute: 0,  tank: 0  }, dist: [20, 36], wind: 0,   gap: 3.8, maxOn: 3 },
+  { count: 7, mix: { walker: 50,  runner: 30, brute: 20, tank: 0  }, dist: [22, 40], wind: 1.5, gap: 3.3, maxOn: 4 },
+  { count: 8, mix: { walker: 30,  runner: 35, brute: 35, tank: 0  }, dist: [24, 42], wind: 3,   gap: 2.9, maxOn: 4 },
+  { count: 9, mix: { walker: 20,  runner: 30, brute: 30, tank: 20 }, dist: [26, 44], wind: 4,   gap: 2.6, maxOn: 5 },
 ];
 export const ENDLESS = {
   extraPerWave: 1,
@@ -85,6 +88,9 @@ export const ENDLESS = {
   windMax: 5,             // …up to ±5 m/s
   speedMulPerWave: 1.05,
   speedMulCap: 1.5,
+  gapStep: 0.15,          // spawn gap shrinks per endless wave…
+  gapMin: 1.5,            // …down to this
+  maxOnCap: 7,
 };
 
 // ---- Palette: Endesga 32 ----
