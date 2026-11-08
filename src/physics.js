@@ -1,6 +1,6 @@
 import {
-  G, THRUST, BURN_TIME, DRAG_K, LAUNCH_POINT, MAX_FLIGHT, DT, V_MIN, V_MAX, MAX_PULL,
-  PX_PER_M, GROUND_Y, AIM_ANGLE_MIN, AIM_ANGLE_MAX, PREVIEW_DOT_DT, ROCKET_RADIUS,
+  G, THRUST, BURN_TIME, DRAG_K, LAUNCH_SPEED, LAUNCH_POINT, MAX_FLIGHT, DT,
+  PX_PER_M, GROUND_Y, AIM_ANGLE_MIN, AIM_ANGLE_MAX, PREVIEW_DOT_DT,
 } from './config.js';
 
 // ---- Units ----
@@ -10,7 +10,7 @@ export const toWorldX = (px) => px / PX_PER_M;
 export const toWorldY = (py) => (GROUND_Y - py) / PX_PER_M;
 export const LAUNCH_PX = { x: toScreenX(LAUNCH_POINT.x), y: toScreenY(LAUNCH_POINT.y) };
 
-export function makeRocketState(angleDeg, v0) {
+export function makeRocketState(angleDeg, v0 = LAUNCH_SPEED) {
   const a = (angleDeg * Math.PI) / 180;
   return {
     x: LAUNCH_POINT.x, y: LAUNCH_POINT.y,
@@ -37,45 +37,57 @@ export function stepRocket(r, wind, dt) {
   r.t += dt;
 }
 
-// Slingshot: pull vector (screen px, press point − pointer) → shot.
-// The aim is the pull direction; anything outside the allowed range snaps to the
-// nearer limit, so the aim never flips or jumps.
-// prevAngle: the aim from the last frame. When the pull points "backwards" we stay on
-// whichever limit you were already nearest, instead of flipping between up and down.
-export function shotFromPull(dx, dy, prevAngle = null) {
-  const len = Math.min(Math.hypot(dx, dy), MAX_PULL);
-  let ang = (Math.atan2(-dy, dx) * 180) / Math.PI; // screen y is down
-  if (ang > AIM_ANGLE_MAX || ang < AIM_ANGLE_MIN) {
-    if (prevAngle !== null) {
-      ang = Math.abs(prevAngle - AIM_ANGLE_MAX) <= Math.abs(prevAngle - AIM_ANGLE_MIN) ? AIM_ANGLE_MAX : AIM_ANGLE_MIN;
-    } else {
-      const toMax = (((ang - AIM_ANGLE_MAX) % 360) + 360) % 360;
-      const toMin = (((AIM_ANGLE_MIN - ang) % 360) + 360) % 360;
-      ang = toMax <= toMin ? AIM_ANGLE_MAX : AIM_ANGLE_MIN;
-    }
+// Height of a no-wind shot when it first reaches x = tx (null if it lands first).
+function heightAt(angle, tx, dt) {
+  const r = makeRocketState(angle);
+  while (r.t < MAX_FLIGHT) {
+    stepRocket(r, 0, dt);
+    if (r.x >= tx) return r.y;
+    if (r.y <= 0) return null;
   }
-  const power = len / MAX_PULL;
-  return { len, power, angle: ang, v0: V_MIN + (V_MAX - V_MIN) * power };
+  return null;
 }
 
-// No-wind preview of the whole flight. Stops where it would hit a zombie
-// (as they stand right now) or the ground.
-export function previewShot(angle, v0, zombies = []) {
-  const r = makeRocketState(angle, v0);
+// Golf-style aim: given a target point (metres), find the launch angle whose
+// no-wind path passes through it. Takes the low, direct branch, so close
+// targets get a near-straight shot and far ones get a lob.
+export function solveAim(tx, ty) {
+  const COARSE = 1 / 60;
+  let prevA = null;
+  let best = { a: 40, h: -Infinity };
+  for (let a = AIM_ANGLE_MIN; a <= AIM_ANGLE_MAX; a += 0.5) {
+    const h = heightAt(a, tx, COARSE);
+    if (h !== null && h > best.h) best = { a, h };
+    if (h !== null && h >= ty) {
+      // bisect between the last angle that passed under the target and this one
+      let lo = prevA === null ? a - 0.5 : prevA, hi = a;
+      for (let i = 0; i < 14; i++) {
+        const mid = (lo + hi) / 2;
+        const hm = heightAt(mid, tx, DT);
+        if (hm !== null && hm >= ty) hi = mid; else lo = mid;
+      }
+      return { angle: hi, reachable: true };
+    }
+    prevA = a;
+  }
+  return { angle: best.a, reachable: false };
+}
+
+// No-wind flight path for the preview: dots up to the target x (or landing).
+export function previewPath(angle, tx) {
+  const r = makeRocketState(angle);
   const pts = [];
-  let next = PREVIEW_DOT_DT, hit = null;
-  while (r.t < MAX_FLIGHT && r.y > 0) {
+  let next = PREVIEW_DOT_DT;
+  while (r.t < MAX_FLIGHT && r.y > 0 && r.x < tx) {
     stepRocket(r, 0, DT);
     if (r.t >= next) { pts.push({ x: r.x, y: Math.max(0, r.y) }); next += PREVIEW_DOT_DT; }
-    hit = zombies.find((z) => !z.dead && circleHitsRect(r.x, r.y, ROCKET_RADIUS, z.rect));
-    if (hit) break;
   }
-  return { pts, hit, end: { x: r.x, y: Math.max(0, r.y) }, landed: r.y <= 0 };
+  return pts;
 }
 
 // Full-flight simulation, used by tests / tuning.
-export function simulateShot(angle, v0, wind = 0) {
-  const r = makeRocketState(angle, v0);
+export function simulateShot(angle, wind = 0) {
+  const r = makeRocketState(angle);
   while (r.t < MAX_FLIGHT && r.y > 0) stepRocket(r, wind, DT);
   return { x: r.x, y: r.y, t: r.t };
 }

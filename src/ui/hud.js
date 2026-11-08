@@ -1,10 +1,11 @@
-import { PAL, W, MAX_LIVES, POWERUP_SEGMENTS } from '../config.js';
+import { PAL, W, MAX_LIVES, POWERUP_SEGMENTS, METER_PERFECT, METER_GOOD } from '../config.js';
 import { drawText, textWidth } from './font.js';
 import { pixelLine } from '../gfx.js';
 
 export const HUD_BUTTONS = {
   pause: { x: 452, y: 2, w: 26, h: 20 },
   power: { x: 414, y: 2, w: 34, h: 30 },
+  fire: { x: 1, y: 186, w: 64, h: 30 },     // touch only — over the house, away from the street
 };
 
 export function inRect(p, r) { return p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h; }
@@ -90,6 +91,18 @@ export function drawHUD(ctx, g, t) {
     drawText(ctx, `${g.meter}/${POWERUP_SEGMENTS}`, pb.x - 2, iy + 2, { color: PAL.grey1, shadow: PAL.black, align: 'right' });
   }
 
+  // touch FIRE button
+  if (g.touchUsed && g.mode === 'play') {
+    const f = HUD_BUTTONS.fire;
+    const active = !!g.swing;
+    const ready = g.canFire();
+    ctx.fillStyle = PAL.black; ctx.fillRect(f.x + 1, f.y + 2, f.w, f.h);
+    ctx.fillStyle = active ? PAL.yellow : ready ? PAL.red2 : PAL.navy2;
+    ctx.fillRect(f.x, f.y, f.w, f.h);
+    ctx.fillStyle = active ? PAL.white : ready ? PAL.rose : PAL.grey3; ctx.fillRect(f.x, f.y, f.w, 1);
+    drawText(ctx, active ? 'STOP!' : 'FIRE', f.x + f.w / 2, f.y + 9, { scale: 2, color: active ? PAL.plumD : PAL.white, align: 'center' });
+  }
+
   // pause button
   const ps = HUD_BUTTONS.pause;
   ctx.fillStyle = PAL.black; ctx.fillRect(ps.x + 6, ps.y + 3, 14, 13);
@@ -114,4 +127,29 @@ export function drawOffscreenRocket(ctx, sx, sy) {
   ctx.fillStyle = PAL.yellow;
   ctx.fillRect(x, 34, 1, 1); ctx.fillRect(x - 1, 35, 3, 1); ctx.fillRect(x - 2, 36, 5, 1);
   drawText(ctx, `${Math.round(-sy / 10)}M`, x, 39, { color: PAL.yellow, shadow: PAL.black, align: 'center' });
+}
+
+// Golf-style swing meter: red edges, green "good" band, gold "perfect" centre, sweeping needle.
+export const METER = { x: 22, y: 118, w: 100, h: 9 };
+export function drawSwingMeter(ctx, needle, t) {
+  const { x, y, w, h } = METER;
+  const cx = x + w / 2;
+  ctx.fillStyle = PAL.black; ctx.fillRect(x - 2, y - 2, w + 4, h + 4);
+  ctx.fillStyle = PAL.red; ctx.fillRect(x, y, w, h);
+  const gw = Math.round(METER_GOOD * w / 2);
+  ctx.fillStyle = PAL.green2; ctx.fillRect(cx - gw, y, gw * 2, h);
+  const pw = Math.max(2, Math.round(METER_PERFECT * w / 2));
+  const flash = Math.floor(t * 10) % 2;
+  ctx.fillStyle = flash ? PAL.yellow : PAL.gold; ctx.fillRect(cx - pw, y, pw * 2, h);
+  ctx.fillStyle = PAL.white; ctx.fillRect(x, y, w, 1);
+  // ticks
+  ctx.fillStyle = PAL.black;
+  for (const f of [-0.5, 0.5]) ctx.fillRect(Math.round(cx + f * w / 2), y + h - 3, 1, 3);
+  // needle
+  const nx = Math.round(cx + needle * (w / 2 - 1));
+  ctx.fillStyle = PAL.black; ctx.fillRect(nx - 2, y - 5, 5, h + 10);
+  ctx.fillStyle = PAL.white; ctx.fillRect(nx - 1, y - 4, 3, h + 8);
+  ctx.fillStyle = PAL.cyan; ctx.fillRect(nx, y - 3, 1, h + 6);
+  drawText(ctx, 'LOW', x, y + h + 4, { color: PAL.grey1, shadow: PAL.black });
+  drawText(ctx, 'HIGH', x + w, y + h + 4, { color: PAL.grey1, shadow: PAL.black, align: 'right' });
 }

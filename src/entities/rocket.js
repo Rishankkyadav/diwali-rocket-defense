@@ -63,8 +63,8 @@ export function drawRocketSprite(ctx, sx, sy, heading, burning, t) {
 }
 
 export class Rocket {
-  constructor(angle, v0) {
-    this.s = makeRocketState(angle, v0);
+  constructor(angle) {
+    this.s = makeRocketState(angle);
     this.trailT = 0;
   }
   get burning() { return this.s.burnLeft > 0; }
